@@ -166,6 +166,8 @@ export async function POST(req: Request) {
 
           try {
             queriesRun++;
+            // Rate-Limit Schutz: 4s zwischen Gemini Calls
+            if (i > 0) await new Promise((r) => setTimeout(r, 4000));
             const results = await searchWeb(q.query, region);
             rawResults += results.length;
             send({ type: "query:done", resultCount: results.length, city: q.city });

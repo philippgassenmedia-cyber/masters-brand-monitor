@@ -77,11 +77,27 @@ async function runDeepScan(): Promise<{
 
   const runId = run?.id;
 
+  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
   try {
     for (const query of DEEP_QUERIES) {
       try {
         queries++;
-        const results = await searchWeb(query, region);
+        // Rate-Limit: max 15 RPM → 4s zwischen Calls
+        if (queries > 1) await delay(4000);
+        let results;
+        try {
+          results = await searchWeb(query, region);
+        } catch (retryErr) {
+          // Retry nach 10s bei Rate-Limit
+          if ((retryErr as Error).message.includes("429") || (retryErr as Error).message.includes("quota")) {
+            console.log("[Cron] Rate limit hit, waiting 15s...");
+            await delay(15000);
+            results = await searchWeb(query, region);
+          } else {
+            throw retryErr;
+          }
+        }
         rawResults += results.length;
 
         for (const result of results) {
