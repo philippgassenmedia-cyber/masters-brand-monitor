@@ -1,0 +1,623 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import Link from "next/link";
+
+interface ProfileData {
+  display_name: string;
+  company: string;
+  email: string;
+  role: string;
+}
+
+interface ScheduleData {
+  mode: "daily" | "weekly" | "every_n_days" | "every_n_weeks" | "every_n_months";
+  interval: number;
+  day_of_week: number;
+  hour: number;
+}
+
+interface BrandData {
+  brand_name: string;
+  brand_owner: string;
+  own_domains: string;
+  owner_names: string;
+}
+
+interface WebSearchData {
+  daily_limit: number;
+  default_mode: "quick" | "deep";
+  default_region: string;
+}
+
+interface DpmaSearchData {
+  variant_count: number;
+  parallel_tabs: number;
+  default_klassen: string;
+  nur_de: boolean;
+  nur_in_kraft: boolean;
+  zeitraum_monate: number;
+}
+
+const SCHEDULE_MODES = [
+  { value: "daily", label: "Täglich" },
+  { value: "weekly", label: "Wöchentlich" },
+  { value: "every_n_days", label: "Alle X Tage" },
+  { value: "every_n_weeks", label: "Alle X Wochen" },
+  { value: "every_n_months", label: "Alle X Monate" },
+] as const;
+
+const DAYS_OF_WEEK = [
+  { value: 0, label: "Sonntag" },
+  { value: 1, label: "Montag" },
+  { value: 2, label: "Dienstag" },
+  { value: 3, label: "Mittwoch" },
+  { value: 4, label: "Donnerstag" },
+  { value: 5, label: "Freitag" },
+  { value: 6, label: "Samstag" },
+];
+
+const DEFAULT_PROFILE: ProfileData = {
+  display_name: "",
+  company: "Master Immobilien",
+  email: "",
+  role: "Admin",
+};
+
+const DEFAULT_SCHEDULE: ScheduleData = {
+  mode: "weekly",
+  interval: 1,
+  day_of_week: 1,
+  hour: 7,
+};
+
+const DEFAULT_BRAND: BrandData = {
+  brand_name: "MASTER",
+  brand_owner: "Masters Immobilien MbH",
+  own_domains: "master.de",
+  owner_names: "Master Immobilien GmbH, Master Immobiliengesellschaft mbH, Masters Immobilien GmbH",
+};
+
+const DEFAULT_WEB_SEARCH: WebSearchData = {
+  daily_limit: 200,
+  default_mode: "quick",
+  default_region: "deutschland",
+};
+
+const DEFAULT_DPMA_SEARCH: DpmaSearchData = {
+  variant_count: 8,
+  parallel_tabs: 3,
+  default_klassen: "36 37 42",
+  nur_de: true,
+  nur_in_kraft: true,
+  zeitraum_monate: 3,
+};
+
+export function SettingsClient({
+  initialSettings,
+  userEmail,
+}: {
+  initialSettings: Record<string, unknown>;
+  userEmail: string;
+}) {
+  const raw = initialSettings as Record<string, Record<string, unknown>>;
+  const [profile, setProfile] = useState<ProfileData>({
+    ...DEFAULT_PROFILE,
+    email: userEmail,
+    ...(raw.profile as Partial<ProfileData> | undefined),
+  });
+  const [schedule, setSchedule] = useState<ScheduleData>({
+    ...DEFAULT_SCHEDULE,
+    ...(raw.deep_scan_schedule as Partial<ScheduleData> | undefined),
+  });
+  const [brand, setBrand] = useState<BrandData>({
+    ...DEFAULT_BRAND,
+    ...(raw.brand as Partial<BrandData> | undefined),
+  });
+  const [webSearch, setWebSearch] = useState<WebSearchData>({
+    ...DEFAULT_WEB_SEARCH,
+    ...(raw.web_search as Partial<WebSearchData> | undefined),
+  });
+  const [dpmaSearch, setDpmaSearch] = useState<DpmaSearchData>({
+    ...DEFAULT_DPMA_SEARCH,
+    ...(raw.dpma_search as Partial<DpmaSearchData> | undefined),
+  });
+  const [pending, startTransition] = useTransition();
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = () => {
+    setError(null);
+    setSaved(false);
+    startTransition(async () => {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          profile,
+          deep_scan_schedule: schedule,
+          brand,
+          web_search: webSearch,
+          dpma_search: dpmaSearch,
+        }),
+      });
+      if (!res.ok) {
+        setError("Speichern fehlgeschlagen.");
+        return;
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    });
+  };
+
+  const showInterval =
+    schedule.mode === "every_n_days" ||
+    schedule.mode === "every_n_weeks" ||
+    schedule.mode === "every_n_months";
+  const showDayOfWeek =
+    schedule.mode === "weekly" || schedule.mode === "every_n_weeks";
+
+  const scheduleLabel = (() => {
+    switch (schedule.mode) {
+      case "daily":
+        return `Jeden Tag um ${schedule.hour}:00 Uhr`;
+      case "weekly":
+        return `Jeden ${DAYS_OF_WEEK.find((d) => d.value === schedule.day_of_week)?.label} um ${schedule.hour}:00 Uhr`;
+      case "every_n_days":
+        return `Alle ${schedule.interval} Tage um ${schedule.hour}:00 Uhr`;
+      case "every_n_weeks":
+        return `Alle ${schedule.interval} Wochen am ${DAYS_OF_WEEK.find((d) => d.value === schedule.day_of_week)?.label} um ${schedule.hour}:00 Uhr`;
+      case "every_n_months":
+        return `Alle ${schedule.interval} Monate um ${schedule.hour}:00 Uhr`;
+      default:
+        return "";
+    }
+  })();
+
+  return (
+    <div>
+      <header className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-semibold text-stone-900">Einstellungen</h1>
+        <div className="flex items-center gap-4">
+          <Link
+            href="/settings/dpma"
+            className="rounded-full bg-stone-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
+          >
+            DPMA-Modul →
+          </Link>
+          <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">
+            ← Dashboard
+          </Link>
+        </div>
+      </header>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Profil */}
+        <section className="glass p-6">
+          <h2 className="mb-5 text-lg font-semibold text-stone-900">Profil</h2>
+          <div className="grid gap-4">
+            <PillInput
+              label="Anzeigename"
+              icon={
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+              }
+              value={profile.display_name}
+              onChange={(v) => setProfile({ ...profile, display_name: v })}
+              placeholder="Max Mustermann"
+              disabled={pending}
+            />
+            <PillInput
+              label="Unternehmen"
+              icon={
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 21h18" />
+                  <path d="M5 21V7l7-4 7 4v14" />
+                </svg>
+              }
+              value={profile.company}
+              onChange={(v) => setProfile({ ...profile, company: v })}
+              placeholder="Master Immobilien"
+              disabled={pending}
+            />
+            <PillInput
+              label="E-Mail"
+              icon={
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d="m3 7 9 6 9-6" />
+                </svg>
+              }
+              value={profile.email}
+              onChange={(v) => setProfile({ ...profile, email: v })}
+              placeholder="email@example.com"
+              disabled={pending}
+            />
+            <PillSelect
+              label="Rolle"
+              icon={
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+              }
+              value={profile.role}
+              onChange={(v) => setProfile({ ...profile, role: v })}
+              options={["Admin", "Analyst", "Viewer"]}
+              disabled={pending}
+            />
+          </div>
+        </section>
+
+        {/* Deep-Scan Intervall */}
+        <section className="glass p-6">
+          <h2 className="mb-5 text-lg font-semibold text-stone-900">
+            Deep-Scan Intervall
+          </h2>
+          <div className="grid gap-4">
+            <PillSelect
+              label="Häufigkeit"
+              icon={
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+              }
+              value={schedule.mode}
+              onChange={(v) =>
+                setSchedule({
+                  ...schedule,
+                  mode: v as ScheduleData["mode"],
+                  interval: v === "daily" || v === "weekly" ? 1 : schedule.interval,
+                })
+              }
+              options={SCHEDULE_MODES.map((m) => m.value)}
+              labels={SCHEDULE_MODES.map((m) => m.label)}
+              disabled={pending}
+            />
+
+            {showInterval && (
+              <PillInput
+                label={
+                  schedule.mode === "every_n_days"
+                    ? "Alle X Tage"
+                    : schedule.mode === "every_n_weeks"
+                      ? "Alle X Wochen"
+                      : "Alle X Monate"
+                }
+                icon={
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 2v4M16 2v4" />
+                    <rect x="3" y="4" width="18" height="18" rx="2" />
+                    <path d="M3 10h18" />
+                  </svg>
+                }
+                value={String(schedule.interval)}
+                onChange={(v) =>
+                  setSchedule({ ...schedule, interval: Math.max(1, Number(v) || 1) })
+                }
+                type="number"
+                disabled={pending}
+              />
+            )}
+
+            {showDayOfWeek && (
+              <PillSelect
+                label="Wochentag"
+                icon={
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M8 2v4M16 2v4" />
+                    <rect x="3" y="4" width="18" height="18" rx="2" />
+                    <path d="M3 10h18" />
+                  </svg>
+                }
+                value={String(schedule.day_of_week)}
+                onChange={(v) =>
+                  setSchedule({ ...schedule, day_of_week: Number(v) })
+                }
+                options={DAYS_OF_WEEK.map((d) => String(d.value))}
+                labels={DAYS_OF_WEEK.map((d) => d.label)}
+                disabled={pending}
+              />
+            )}
+
+            <PillSelect
+              label="Uhrzeit"
+              icon={
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+              }
+              value={String(schedule.hour)}
+              onChange={(v) => setSchedule({ ...schedule, hour: Number(v) })}
+              options={Array.from({ length: 24 }, (_, i) => String(i))}
+              labels={Array.from({ length: 24 }, (_, i) => `${i}:00 Uhr`)}
+              disabled={pending}
+            />
+
+            <div className="mt-2 rounded-xl border border-white/70 bg-white/50 px-4 py-3 text-[12px] text-stone-600">
+              <span className="font-semibold text-stone-800">Nächster Deep-Scan: </span>
+              {scheduleLabel}
+            </div>
+          </div>
+        </section>
+      </div>
+
+      {/* Marken-Konfiguration */}
+      <section className="glass mt-6 p-6">
+        <h2 className="mb-5 text-lg font-semibold text-stone-900">Marke & Inhaber</h2>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <PillInput
+            label="Markenname"
+            icon={<IconShield />}
+            value={brand.brand_name}
+            onChange={(v) => setBrand({ ...brand, brand_name: v })}
+            placeholder="MASTER"
+            disabled={pending}
+          />
+          <PillInput
+            label="Markeninhaber"
+            icon={<IconBuilding />}
+            value={brand.brand_owner}
+            onChange={(v) => setBrand({ ...brand, brand_owner: v })}
+            placeholder="Masters Immobilien MbH"
+            disabled={pending}
+          />
+          <PillInput
+            label="Eigene Domains (kommagetrennt)"
+            icon={<IconGlobe />}
+            value={brand.own_domains}
+            onChange={(v) => setBrand({ ...brand, own_domains: v })}
+            placeholder="master.de"
+            disabled={pending}
+          />
+          <div className="sm:col-span-2">
+            <PillInput
+              label="Firmennamen-Varianten des Inhabers (kommagetrennt)"
+              icon={<IconShield />}
+              value={brand.owner_names}
+              onChange={(v) => setBrand({ ...brand, owner_names: v })}
+              placeholder="Master Immobilien GmbH, Masters Immobilien GmbH"
+              disabled={pending}
+            />
+          </div>
+        </div>
+      </section>
+
+      {/* Web-Suche */}
+      <section className="glass mt-6 p-6">
+        <h2 className="mb-5 text-lg font-semibold text-stone-900">Web-Suche</h2>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <PillInput
+            label="Tägliches API-Limit"
+            icon={<IconClock />}
+            value={String(webSearch.daily_limit)}
+            onChange={(v) => setWebSearch({ ...webSearch, daily_limit: Number(v) || 200 })}
+            type="number"
+            disabled={pending}
+          />
+          <PillSelect
+            label="Standard-Modus"
+            icon={<IconClock />}
+            value={webSearch.default_mode}
+            onChange={(v) => setWebSearch({ ...webSearch, default_mode: v as "quick" | "deep" })}
+            options={["quick", "deep"]}
+            labels={["Quick (≤ 15 Min)", "Deep (bis 1h+)"]}
+            disabled={pending}
+          />
+          <PillSelect
+            label="Standard-Region"
+            icon={<IconGlobe />}
+            value={webSearch.default_region}
+            onChange={(v) => setWebSearch({ ...webSearch, default_region: v })}
+            options={["deutschland", "hessen", "dach", "eu", "welt"]}
+            labels={["Deutschland", "Hessen", "DACH", "Europa", "Weltweit"]}
+            disabled={pending}
+          />
+        </div>
+      </section>
+
+      {/* DPMA-Suche */}
+      <section className="glass mt-6 p-6">
+        <div className="mb-5 flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-stone-900">DPMA-Register</h2>
+          <Link
+            href="/settings/dpma"
+            className="rounded-full bg-stone-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-stone-800"
+          >
+            IMAP & Stämme →
+          </Link>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <PillInput
+            label="Anzahl Suchvarianten"
+            icon={<IconClock />}
+            value={String(dpmaSearch.variant_count)}
+            onChange={(v) => setDpmaSearch({ ...dpmaSearch, variant_count: Math.max(1, Number(v) || 8) })}
+            type="number"
+            disabled={pending}
+          />
+          <PillInput
+            label="Parallele Browser-Tabs"
+            icon={<IconClock />}
+            value={String(dpmaSearch.parallel_tabs)}
+            onChange={(v) => setDpmaSearch({ ...dpmaSearch, parallel_tabs: Math.max(1, Math.min(5, Number(v) || 3)) })}
+            type="number"
+            disabled={pending}
+          />
+          <PillInput
+            label="Standard Nizza-Klassen"
+            icon={<IconShield />}
+            value={dpmaSearch.default_klassen}
+            onChange={(v) => setDpmaSearch({ ...dpmaSearch, default_klassen: v })}
+            placeholder="36 37 42"
+            disabled={pending}
+          />
+          <label className="flex items-center gap-2 text-xs text-stone-700">
+            <input type="checkbox" checked={dpmaSearch.nur_de} onChange={(e) => setDpmaSearch({ ...dpmaSearch, nur_de: e.target.checked })} className="h-4 w-4 rounded" disabled={pending} />
+            Nur deutsche Marken
+          </label>
+          <label className="flex items-center gap-2 text-xs text-stone-700">
+            <input type="checkbox" checked={dpmaSearch.nur_in_kraft} onChange={(e) => setDpmaSearch({ ...dpmaSearch, nur_in_kraft: e.target.checked })} className="h-4 w-4 rounded" disabled={pending} />
+            Nur in Kraft befindliche
+          </label>
+          <PillSelect
+            label="Standard-Zeitraum"
+            icon={<IconClock />}
+            value={String(dpmaSearch.zeitraum_monate)}
+            onChange={(v) => setDpmaSearch({ ...dpmaSearch, zeitraum_monate: Number(v) })}
+            options={["1", "3", "6", "12", "0"]}
+            labels={["4 Wochen", "3 Monate", "6 Monate", "1 Jahr", "Kein Filter"]}
+            disabled={pending}
+          />
+        </div>
+      </section>
+
+      {error && (
+        <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-2 text-sm text-rose-800">
+          {error}
+        </div>
+      )}
+      {saved && (
+        <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-2 text-sm text-emerald-800">
+          Einstellungen gespeichert
+        </div>
+      )}
+
+      <div className="mt-6 flex justify-end">
+        <button
+          onClick={save}
+          disabled={pending}
+          className="h-12 rounded-full bg-stone-900 px-8 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(68,64,60,0.25)] transition hover:bg-stone-800 disabled:opacity-60"
+        >
+          {pending ? "Speichere…" : "Einstellungen speichern"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PillInput({
+  label,
+  icon,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+  type = "text",
+}: {
+  label: string;
+  icon: React.ReactNode;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  type?: string;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">
+        {label}
+      </div>
+      <div className="relative">
+        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-stone-400">
+          {icon}
+        </span>
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          className="h-12 w-full rounded-full border border-white/80 bg-orange-50/70 pl-11 pr-4 text-sm text-stone-800 placeholder:text-stone-400 shadow-[0_2px_12px_rgba(120,90,60,0.06)] backdrop-blur-md outline-none transition focus:border-stone-400 focus:bg-white/90 disabled:opacity-60"
+        />
+      </div>
+    </div>
+  );
+}
+
+function PillSelect({
+  label,
+  icon,
+  value,
+  onChange,
+  options,
+  labels,
+  disabled,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+  labels?: string[];
+  disabled?: boolean;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">
+        {label}
+      </div>
+      <div className="relative">
+        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-stone-400">
+          {icon}
+        </span>
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          className="h-12 w-full appearance-none rounded-full border border-white/80 bg-orange-50/70 pl-11 pr-10 text-sm text-stone-800 shadow-[0_2px_12px_rgba(120,90,60,0.06)] backdrop-blur-md outline-none transition focus:border-stone-400 focus:bg-white/90 disabled:opacity-60"
+        >
+          {options.map((opt, i) => (
+            <option key={opt} value={opt}>
+              {labels?.[i] ?? opt}
+            </option>
+          ))}
+        </select>
+        <span className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-stone-400">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function IconShield() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+}
+
+function IconBuilding() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 21h18" />
+      <path d="M5 21V7l7-4 7 4v14" />
+    </svg>
+  );
+}
+
+function IconGlobe() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  );
+}
+
+function IconClock() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}

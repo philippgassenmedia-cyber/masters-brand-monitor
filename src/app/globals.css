@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  @apply text-stone-800 antialiased;
+  background:
+    radial-gradient(1400px 900px at 90% -15%, rgba(251, 207, 175, 0.45) 0%, rgba(251, 207, 175, 0) 55%),
+    radial-gradient(1000px 800px at -15% 15%, rgba(252, 231, 190, 0.4) 0%, rgba(252, 231, 190, 0) 60%),
+    radial-gradient(1200px 1000px at 95% 100%, rgba(232, 198, 185, 0.35) 0%, rgba(232, 198, 185, 0) 60%),
+    linear-gradient(180deg, #fbf8f4 0%, #faf6f0 60%, #f8f3ec 100%);
+  background-attachment: fixed;
+  font-family:
+    var(--font-inter),
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Display",
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-feature-settings: "cv11", "ss01";
+}
+
+@layer components {
+  /* Large outer container that holds sidebar + main content */
+  .glass-shell {
+    @apply rounded-[2rem] border border-white/60 bg-white/40 shadow-[0_20px_60px_-20px_rgba(120,90,60,0.18)] backdrop-blur-2xl;
+  }
+  /* Individual sections inside the shell — lighter, cleaner */
+  .glass {
+    @apply rounded-2xl border border-white/70 bg-white/75 shadow-[0_2px_12px_rgba(120,90,60,0.04)];
+  }
+  .glass-strong {
+    @apply rounded-2xl border border-white/80 bg-white/85 shadow-[0_3px_16px_rgba(120,90,60,0.06)];
+  }
+  /* Sidebar keeps its own stronger glass look */
+  .glass-sidebar {
+    @apply rounded-2xl border border-white/70 bg-white/65 shadow-[0_4px_24px_rgba(120,90,60,0.08)] backdrop-blur-xl;
+  }
+  .glass-row {
+    @apply border-white/50 bg-white/55;
+  }
+}
+
+.scroll-area::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-area::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-area::-webkit-scrollbar-thumb {
+  background: rgba(120, 113, 108, 0.25);
+  border-radius: 999px;
+}
+.scroll-area::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 113, 108, 0.4);
+}
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 113, 108, 0.25) transparent;
+}
+
+@keyframes success-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes success-card-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(12px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.02) translateY(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.fade-row {
+  mask-image: linear-gradient(to bottom, black 20%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 20%, transparent 100%);
+}
+
+.success-overlay {
+  animation: success-overlay-in 250ms ease-out both;
+}
+.success-card {
+  animation: success-card-in 450ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
