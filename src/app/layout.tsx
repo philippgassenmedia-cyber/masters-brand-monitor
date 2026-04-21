@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { ScanProvider } from "@/components/scan-context";
+import { ScanOverlay } from "@/components/scan-overlay";
 import "./globals.css";
 
 const inter = Inter({
@@ -16,7 +18,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="de" className={inter.variable}>
-      <body>{children}</body>
+      <body>
+        <ScanProvider>
+          {children}
+          <ScanOverlay />
+        </ScanProvider>
+      </body>
     </html>
   );
 }

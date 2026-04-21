@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdminClient } from "@/lib/supabase/server";
+import { sendScanReport } from "@/lib/email-service";
 import { searchWeb, type SearchRegion } from "@/lib/search";
 import { analyzeHitWithGemini } from "@/lib/gemini";
 import { scrapeImpressum } from "@/lib/impressum-scraper";
@@ -168,7 +169,9 @@ export async function GET(req: Request) {
 
   try {
     const summary = await runDeepScan();
-    return NextResponse.json({ ok: true, ...summary });
+    let emailResult = { sent: 0, violations: 0 };
+    try { emailResult = await sendScanReport(); } catch (e) { console.error("[Cron] Email:", (e as Error).message); }
+    return NextResponse.json({ ok: true, ...summary, email: emailResult });
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: (e as Error).message },
@@ -184,7 +187,9 @@ export async function POST(req: Request) {
 
   try {
     const summary = await runDeepScan();
-    return NextResponse.json({ ok: true, ...summary });
+    let emailResult = { sent: 0, violations: 0 };
+    try { emailResult = await sendScanReport(); } catch (e) { console.error("[Cron] Email:", (e as Error).message); }
+    return NextResponse.json({ ok: true, ...summary, email: emailResult });
   } catch (e) {
     return NextResponse.json(
       { ok: false, error: (e as Error).message },

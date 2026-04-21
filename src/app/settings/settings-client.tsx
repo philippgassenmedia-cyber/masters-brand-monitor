@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 interface ProfileData {
   display_name: string;
@@ -475,6 +476,9 @@ export function SettingsClient({
         </div>
       </section>
 
+      {/* E-Mail-Empfänger für Scan-Reports */}
+      <EmailRecipientsSection />
+
       {error && (
         <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-2 text-sm text-rose-800">
           {error}
@@ -619,5 +623,108 @@ function IconClock() {
       <circle cx="12" cy="12" r="10" />
       <polyline points="12 6 12 12 16 14" />
     </svg>
+  );
+}
+
+function EmailRecipientsSection() {
+  const [recipients, setRecipients] = useState<Array<{ id: string; email: string; name: string | null; aktiv: boolean }>>([]);
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
+  const [pending, startTransition] = useTransition();
+  const router = useRouter();
+
+  useEffect(() => {
+    fetch("/api/email-recipients")
+      .then((r) => r.json())
+      .then((d) => setRecipients(d.recipients ?? []))
+      .catch(() => {});
+  }, []);
+
+  const addRecipient = () => {
+    if (!newEmail.trim()) return;
+    startTransition(async () => {
+      await fetch("/api/email-recipients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: newEmail.trim(), name: newName.trim() || undefined }),
+      });
+      setNewEmail("");
+      setNewName("");
+      const r = await fetch("/api/email-recipients");
+      const d = await r.json();
+      setRecipients(d.recipients ?? []);
+    });
+  };
+
+  const removeRecipient = (id: string) => {
+    startTransition(async () => {
+      await fetch("/api/email-recipients", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      setRecipients((prev) => prev.filter((r) => r.id !== id));
+    });
+  };
+
+  return (
+    <section className="glass mt-6 p-6">
+      <h2 className="mb-2 text-lg font-semibold text-stone-900">E-Mail-Benachrichtigungen</h2>
+      <p className="mb-4 text-xs text-stone-600">
+        Nach jedem automatischen Deep-Scan wird ein Report (PDF + CSV) an alle aktiven Empfänger gesendet.
+      </p>
+
+      <div className="space-y-2">
+        {recipients.length === 0 && (
+          <div className="py-4 text-center text-xs text-stone-500">
+            Noch keine Empfänger. Füge unten E-Mail-Adressen hinzu.
+          </div>
+        )}
+        {recipients.map((r) => (
+          <div key={r.id} className="flex items-center justify-between rounded-xl border border-white/70 bg-white/60 px-4 py-2">
+            <div>
+              <div className="text-sm font-semibold text-stone-900">{r.email}</div>
+              {r.name && <div className="text-[11px] text-stone-500">{r.name}</div>}
+            </div>
+            <button
+              onClick={() => removeRecipient(r.id)}
+              disabled={pending}
+              className="text-xs text-stone-500 hover:text-rose-700 disabled:opacity-60"
+            >
+              Entfernen
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 flex gap-2">
+        <input
+          value={newEmail}
+          onChange={(e) => setNewEmail(e.target.value)}
+          placeholder="E-Mail-Adresse"
+          type="email"
+          className="h-10 flex-1 rounded-full border border-white/80 bg-orange-50/70 px-4 text-sm text-stone-800 placeholder:text-stone-400 outline-none"
+          onKeyDown={(e) => e.key === "Enter" && addRecipient()}
+        />
+        <input
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="Name (optional)"
+          className="h-10 w-36 rounded-full border border-white/80 bg-orange-50/70 px-4 text-sm text-stone-800 placeholder:text-stone-400 outline-none"
+          onKeyDown={(e) => e.key === "Enter" && addRecipient()}
+        />
+        <button
+          onClick={addRecipient}
+          disabled={pending || !newEmail.trim()}
+          className="h-10 rounded-full bg-stone-900 px-4 text-xs font-semibold text-white hover:bg-stone-800 disabled:opacity-60"
+        >
+          Hinzufügen
+        </button>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-amber-200/60 bg-amber-50/50 p-3 text-xs text-stone-700">
+        <span className="font-semibold">Gmail-Versand:</span> Trage in den Env-Variablen <code>GMAIL_USER</code> und <code>GMAIL_APP_PASSWORD</code> ein.
+      </div>
+    </section>
   );
 }
