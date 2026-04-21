@@ -14,6 +14,7 @@ function verifyCronSecret(req: Request): boolean {
 }
 
 const DEEP_QUERIES = [
+  // Immobilien
   `"${BRAND_NAME}" Immobilien Makler`,
   `"${BRAND_NAME}" Hausverwaltung`,
   `"${BRAND_NAME}" Immobilien GmbH`,
@@ -23,12 +24,27 @@ const DEEP_QUERIES = [
   `"${BRAND_NAME}" Bauträger`,
   `"${BRAND_NAME}" Immobilien Vermietung`,
   `"${BRAND_NAME}" Immobilien Verwaltung`,
+  // Unternehmensberatung
+  `"${BRAND_NAME}" Unternehmensberatung`,
+  `"${BRAND_NAME}" Beratung GmbH`,
+  `"${BRAND_NAME}" Consulting`,
+  `"${BRAND_NAME}" Management Beratung`,
+  `"${BRAND_NAME}" Business Consulting`,
+  // Überschneidungsfelder
+  `"${BRAND_NAME}" Immobilienberatung`,
+  `"${BRAND_NAME}" Investment`,
+  `"${BRAND_NAME}" Facility Management`,
+  `"${BRAND_NAME}" Vermögensverwaltung`,
+  `"${BRAND_NAME}" Finanzberatung`,
+  // Städte
   `"${BRAND_NAME}" Immobilien Berlin`,
   `"${BRAND_NAME}" Immobilien München`,
   `"${BRAND_NAME}" Immobilien Hamburg`,
   `"${BRAND_NAME}" Immobilien Frankfurt`,
   `"${BRAND_NAME}" Immobilien Köln`,
   `"${BRAND_NAME}" Immobilien Stuttgart`,
+  `"${BRAND_NAME}" Beratung Berlin`,
+  `"${BRAND_NAME}" Beratung München`,
 ];
 
 async function runDeepScan(): Promise<{

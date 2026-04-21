@@ -476,6 +476,9 @@ export function SettingsClient({
         </div>
       </section>
 
+      {/* Geplante Scans */}
+      <ScheduledScansSection />
+
       {/* E-Mail-Empfänger für Scan-Reports */}
       <EmailRecipientsSection />
 
@@ -623,6 +626,148 @@ function IconClock() {
       <circle cx="12" cy="12" r="10" />
       <polyline points="12 6 12 12 16 14" />
     </svg>
+  );
+}
+
+function ScheduledScansSection() {
+  const [scans, setScans] = useState<Array<{ id: string; scheduled_at: string; scan_type: string; status: string; notes: string | null; result: unknown }>>([]);
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("07:00");
+  const [scanType, setScanType] = useState("all");
+  const [notes, setNotes] = useState("");
+  const [pending, startTransition] = useTransition();
+  const router = useRouter();
+
+  useEffect(() => {
+    fetch("/api/scheduled-scans").then((r) => r.json()).then((d) => setScans(d.scans ?? [])).catch(() => {});
+  }, []);
+
+  const addScan = () => {
+    if (!date) return;
+    const scheduledAt = new Date(`${date}T${time}:00`).toISOString();
+    startTransition(async () => {
+      await fetch("/api/scheduled-scans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduled_at: scheduledAt, scan_type: scanType, notes: notes.trim() || undefined }),
+      });
+      setDate("");
+      setNotes("");
+      const r = await fetch("/api/scheduled-scans");
+      setScans((await r.json()).scans ?? []);
+    });
+  };
+
+  const removeScan = (id: string) => {
+    startTransition(async () => {
+      await fetch("/api/scheduled-scans", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      setScans((prev) => prev.filter((s) => s.id !== id));
+    });
+  };
+
+  const triggerNow = (id: string) => {
+    startTransition(async () => {
+      await fetch("/api/scheduled-scans", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trigger_id: id }) });
+      const r = await fetch("/api/scheduled-scans");
+      setScans((await r.json()).scans ?? []);
+    });
+  };
+
+  const STATUS_STYLE: Record<string, string> = {
+    pending: "bg-amber-100 text-amber-900",
+    running: "bg-blue-100 text-blue-900",
+    completed: "bg-emerald-100 text-emerald-900",
+    failed: "bg-rose-100 text-rose-900",
+  };
+
+  const TYPE_LABEL: Record<string, string> = { web: "Web", dpma: "DPMA", all: "Web + DPMA" };
+
+  return (
+    <section className="glass mt-6 p-6">
+      <h2 className="mb-2 text-lg font-semibold text-stone-900">Geplante Scans</h2>
+      <p className="mb-4 text-xs text-stone-600">
+        Plane Einzel-Scans für bestimmte Termine. Wiederkehrende Scans werden über den Deep-Scan Intervall oben gesteuert.
+        Vercel prüft stündlich ob ein Scan fällig ist.
+      </p>
+
+      {/* Neuen Scan planen */}
+      <div className="mb-4 flex flex-wrap gap-2">
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="h-10 rounded-full border border-white/80 bg-orange-50/70 px-4 text-sm text-stone-800 outline-none"
+        />
+        <input
+          type="time"
+          value={time}
+          onChange={(e) => setTime(e.target.value)}
+          className="h-10 rounded-full border border-white/80 bg-orange-50/70 px-4 text-sm text-stone-800 outline-none"
+        />
+        <select
+          value={scanType}
+          onChange={(e) => setScanType(e.target.value)}
+          className="h-10 appearance-none rounded-full border border-white/80 bg-orange-50/70 px-4 text-sm text-stone-800 outline-none"
+        >
+          <option value="all">Web + DPMA</option>
+          <option value="web">Nur Web</option>
+          <option value="dpma">Nur DPMA</option>
+        </select>
+        <input
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Notiz (optional)"
+          className="h-10 flex-1 rounded-full border border-white/80 bg-orange-50/70 px-4 text-sm text-stone-800 placeholder:text-stone-400 outline-none"
+          onKeyDown={(e) => e.key === "Enter" && addScan()}
+        />
+        <button
+          onClick={addScan}
+          disabled={pending || !date}
+          className="h-10 rounded-full bg-stone-900 px-5 text-xs font-semibold text-white hover:bg-stone-800 disabled:opacity-60"
+        >
+          Planen
+        </button>
+      </div>
+
+      {/* Liste geplanter Scans */}
+      <div className="space-y-2">
+        {scans.length === 0 && (
+          <div className="py-4 text-center text-xs text-stone-500">
+            Keine geplanten Scans. Wähle oben Datum + Uhrzeit.
+          </div>
+        )}
+        {scans.map((s) => (
+          <div key={s.id} className="flex items-center justify-between rounded-xl border border-white/70 bg-white/60 px-4 py-2.5">
+            <div className="flex items-center gap-3">
+              <div>
+                <div className="text-sm font-semibold text-stone-900">
+                  {new Date(s.scheduled_at).toLocaleDateString("de-DE")} · {new Date(s.scheduled_at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-stone-500">
+                  <span>{TYPE_LABEL[s.scan_type] ?? s.scan_type}</span>
+                  {s.notes && <span>· {s.notes}</span>}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-semibold capitalize ${STATUS_STYLE[s.status] ?? ""}`}>
+                {s.status}
+              </span>
+              {s.status === "pending" && (
+                <>
+                  <button onClick={() => triggerNow(s.id)} disabled={pending} className="text-xs text-stone-600 hover:text-stone-900 disabled:opacity-60">
+                    Jetzt
+                  </button>
+                  <button onClick={() => removeScan(s.id)} disabled={pending} className="text-xs text-stone-500 hover:text-rose-700 disabled:opacity-60">
+                    Löschen
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

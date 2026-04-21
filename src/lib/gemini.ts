@@ -31,8 +31,16 @@ function buildSystemPrompt(): string {
   const names = ownerNames();
   const namesList = names.length ? names.map((n) => `"${n}"`).join(", ") : "(keine)";
   return `Du bist ein spezialisierter Markenrechts-Analyst. Du bewertest, ob eine Web-Fundstelle
-eine potenzielle Verletzung der geschützten Wortmarke "${BRAND_NAME}" im deutschen
-Immobilienkontext darstellt.
+eine potenzielle Verletzung der geschützten Wortmarke "${BRAND_NAME}" darstellt.
+
+Die Marke ist geschützt in den Bereichen:
+1. IMMOBILIEN (Makler, Hausverwaltung, Bauträger, Projektentwicklung, Vermietung, Property Management)
+2. UNTERNEHMENSBERATUNG (Consulting, Management-Beratung, Business Consulting)
+3. ALLE ÜBERSCHNEIDUNGSFELDER (Immobilienberatung, Investment, Facility Management, Vermögensverwaltung, Finanzberatung)
+
+WICHTIG: Lieber EINMAL MEHR flaggen als zu wenig. Im Zweifel höheren Score vergeben.
+Alles was auch nur ENTFERNT in die Bereiche Immobilien, Beratung, Consulting,
+Finanzen, Investment, Facility Management, Vermögensverwaltung fällt, ist relevant.
 
 ═══ MARKENINHABER ═══
 Inhaber: ${BRAND_OWNER}
@@ -43,31 +51,34 @@ Fundstellen, die den Markeninhaber SELBST betreffen, sind KEINE Verletzung (Scor
 ═══ WAS IST EINE VERLETZUNG? ═══
 Ein Anfangsverdacht auf Markenverletzung liegt vor, wenn:
 ✅ Eine ANDERE Firma (nicht der Inhaber) das Wort "${BRAND_NAME}" oder eine verwechslungsfähige
-   Variante PROMINENT als Teil ihres FIRMENNAMENS oder MARKENNAMENS im Immobilien-Kontext
-   verwendet (Makler, Hausverwaltung, Bauträger, Projektentwicklung, Vermietung, Property Management).
+   Variante PROMINENT als Teil ihres FIRMENNAMENS oder MARKENNAMENS in einem der geschützten
+   Bereiche verwendet.
 Beispiele für KLARE VERLETZUNGEN:
-  - "Master Homes Real Estate GmbH" — eigenständige Immobilienfirma mit "Master" im Namen
+  - "Master Homes Real Estate GmbH" — Immobilienfirma mit "Master" im Namen
   - "MasterGround GmbH" — Immobilienfirma mit "Master" als Namensbestandteil
   - "AM Master Bau GmbH" — Bauträger mit "Master" im Firmennamen
   - "Master Property Management Ltd." — Hausverwaltung mit "Master" im Namen
+  - "Master Consulting GmbH" — Unternehmensberatung mit "Master" im Namen
+  - "Master Alliance Unternehmensberatung" — Beratungsfirma mit "Master"
+  - "MasterInvest GmbH" — Investment/Finanzberatung mit "Master"
+  - "Master Facility Services" — Facility Management mit "Master"
 
 ═══ WAS IST KEINE VERLETZUNG? ═══
-❌ Generische Wortverwendung: "master bedroom", "Masterplan", "master class", "Strata Master"
+❌ Generische Wortverwendung: "master bedroom", "Masterplan" (als Planungsbegriff), "master class"
    → Das Wort "master" wird hier als normales Adjektiv/Substantiv gebraucht, nicht als Marke.
-❌ Andere Branche: "Master Küchen GmbH", "Master Coaching", "Leone Master School"
-   → Kein Immobilien-Kontext.
+❌ Komplett andere Branche OHNE Bezug zu Immobilien/Beratung: "Master Küchen GmbH", "Master Food"
 ❌ Pressemitteilungen/Artikel ÜBER den Markeninhaber selbst.
-❌ Verzeichnis-/Portalseiten (immowelt, gelbeseiten, LinkedIn) die den Inhaber LISTEN.
+❌ Verzeichnis-/Portalseiten die den Inhaber LISTEN.
 ❌ Personen mit Nachnamen "Master" oder akademischem "Master"-Abschluss.
-❌ Software/Apps die "master" im generischen Sinn nutzen ("Real Estate Master Calculator").
+❌ Software/Apps die "master" im generischen Sinn nutzen.
 
 ═══ KATEGORIEN (violation_category) ═══
-"clear_violation"      — Firma nutzt "${BRAND_NAME}" klar als eigene Immobilien-Marke, eigene Website vorhanden
-"suspected_violation"  — starker Verdacht, aber nicht 100% eindeutig (z.B. nur auf Portal gefunden, keine eigene Website)
-"borderline"           — grenzwertig, könnte Zufall oder generische Nutzung sein
+"clear_violation"      — Firma nutzt "${BRAND_NAME}" klar als Marke in Immobilien ODER Beratung
+"suspected_violation"  — starker Verdacht, aber nicht 100% eindeutig
+"borderline"           — grenzwertig, könnte Zufall oder generische Nutzung sein, aber lieber flaggen
 "generic_use"          — Wort "master" wird generisch/beschreibend verwendet, nicht als Marke
 "own_brand"            — Fundstelle betrifft den Markeninhaber selbst
-"other_industry"       — Firma heißt "Master ...", aber ist in einer anderen Branche
+"other_industry"       — Firma heißt "Master ...", aber ist in einer komplett anderen Branche (nicht Immo/Beratung)
 "not_relevant"         — sonstiges, kein Bezug
 
 ═══ SCORE-ZUORDNUNG ═══
@@ -96,6 +107,44 @@ Antworte AUSSCHLIESSLICH mit JSON:
 Keine Einleitung, kein Markdown.`;
 }
 
+// Lädt vergangenes Feedback um den Gemini-Prompt zu verbessern
+async function loadFeedbackContext(): Promise<string> {
+  try {
+    const { getSupabaseAdminClient } = await import("./supabase/server");
+    const db = getSupabaseAdminClient();
+    const { data } = await db
+      .from("hit_feedback")
+      .select("rating, correct_score, comment")
+      .not("comment", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (!data?.length) return "";
+
+    const examples = data
+      .filter((f) => f.comment && f.comment.length > 5)
+      .slice(0, 10)
+      .map((f) => {
+        const label =
+          f.rating === "false_positive" ? "FEHLALARM"
+          : f.rating === "too_high" ? "ZU HOCH BEWERTET"
+          : f.rating === "too_low" ? "ZU NIEDRIG BEWERTET"
+          : f.rating === "missed" ? "ÜBERSEHEN"
+          : "KORREKT";
+        const scoreHint = f.correct_score !== null ? ` (korrekter Score: ${f.correct_score})` : "";
+        return `- ${label}${scoreHint}: ${f.comment}`;
+      })
+      .join("\n");
+
+    if (!examples) return "";
+    return `\n═══ LERNHINWEISE AUS MENSCHLICHEM FEEDBACK ═══
+Die folgenden Hinweise stammen von einem menschlichen Prüfer. Berücksichtige sie
+bei deiner Bewertung, um die gleichen Fehler nicht zu wiederholen:
+${examples}\n`;
+  } catch {
+    return "";
+  }
+}
+
 export async function analyzeHitWithGemini(input: {
   raw: RawSearchResult;
   profile: ImpressumProfile | null;
@@ -104,10 +153,12 @@ export async function analyzeHitWithGemini(input: {
   if (!apiKey) throw new Error("GEMINI_API_KEY missing");
   const modelId = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
 
+  const feedbackContext = await loadFeedbackContext();
+
   const genAI = new GoogleGenerativeAI(apiKey);
   const model = genAI.getGenerativeModel({
     model: modelId,
-    systemInstruction: buildSystemPrompt(),
+    systemInstruction: buildSystemPrompt() + feedbackContext,
     generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
   });
 
@@ -142,7 +193,7 @@ export async function analyzeHitWithGemini(input: {
   // Domain enthält "master"
   const domainHasBrand = domainLower.includes(brandLower);
   // Immobilien-Kontext in Title/URL/Snippet
-  const hasImmoContext = /immobili|makler|hausverwalt|bautr|projektentwick|vermiet|property|real.estate/i.test(
+  const hasImmoContext = /immobili|makler|hausverwalt|bautr|projektentwick|vermiet|property|real.estate|unternehmensberatung|consulting|beratung|management.beratung|business.consult|facility.management|investment|vermögensverwalt|finanzberatung|anlageberatung/i.test(
     `${titleLower} ${input.raw.snippet} ${subjectLower} ${urlLower}`,
   );
 

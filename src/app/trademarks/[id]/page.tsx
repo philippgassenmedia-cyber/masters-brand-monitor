@@ -7,6 +7,7 @@ import { distance as levenshtein } from "fastest-levenshtein";
 import type { Trademark } from "@/lib/dpma/types";
 import { WebsiteLookup } from "./website-lookup";
 import { TrademarkExcludeButton } from "@/components/trademark-exclude-button";
+import { FeedbackForm } from "@/components/feedback-form";
 
 export const dynamic = "force-dynamic";
 
@@ -322,6 +323,8 @@ export default async function TrademarkDetailPage({
           </div>
         )}
       </section>
+
+      <FeedbackForm itemType="trademark" itemId={tm.id} currentScore={tm.relevance_score} />
     </AppShell>
   );
 }

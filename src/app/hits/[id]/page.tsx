@@ -6,6 +6,7 @@ import { cleanAddress, cleanEmail, cleanPhone } from "@/lib/profile-cleanup";
 import { canonicalKey, resolveCompany } from "@/lib/dedupe";
 import { distance as levenshtein } from "fastest-levenshtein";
 import type { Hit } from "@/lib/types";
+import { FeedbackForm } from "@/components/feedback-form";
 import { StatusForm } from "./status-form";
 
 export const dynamic = "force-dynamic";
@@ -130,6 +131,8 @@ export default async function HitDetailPage({
           </div>
         )}
       </section>
+
+      <FeedbackForm itemType="hit" itemId={hit.id} currentScore={hit.ai_score} />
 
       <section className="glass mt-6 p-6">
         <h2 className="text-lg font-semibold">Workflow</h2>

@@ -44,24 +44,38 @@ function buildQueries(params: ScanParams): Array<{ query: string; city?: string 
     queries.push({ query: params.freeText });
   }
 
-  // Base queries
+  // Base queries — Immobilien + Unternehmensberatung
   queries.push({ query: `"${brand}" Immobilien Makler` });
   queries.push({ query: `"${brand}" Hausverwaltung` });
   queries.push({ query: `"${brand}" Immobilien GmbH` });
+  queries.push({ query: `"${brand}" Unternehmensberatung` });
+  queries.push({ query: `"${brand}" Consulting` });
 
   if (params.mode === "deep") {
+    // Immobilien erweitert
     queries.push({ query: `"${brand}" Immobilien Projektentwicklung` });
     queries.push({ query: `"${brand}" Property Management` });
     queries.push({ query: `"${brand}" Real Estate` });
     queries.push({ query: `"${brand}" Bauträger` });
     queries.push({ query: `"${brand}" Immobilien Vermietung` });
     queries.push({ query: `"${brand}" Immobilien Verwaltung` });
+    // Unternehmensberatung erweitert
+    queries.push({ query: `"${brand}" Beratung GmbH` });
+    queries.push({ query: `"${brand}" Management Beratung` });
+    queries.push({ query: `"${brand}" Business Consulting` });
+    // Überschneidungsfelder
+    queries.push({ query: `"${brand}" Immobilienberatung` });
+    queries.push({ query: `"${brand}" Investment` });
+    queries.push({ query: `"${brand}" Facility Management` });
+    queries.push({ query: `"${brand}" Vermögensverwaltung` });
+    queries.push({ query: `"${brand}" Finanzberatung` });
   }
 
   // City-specific queries
   const cityLimit = params.mode === "quick" ? 5 : cities.length;
   for (const city of cities.slice(0, cityLimit)) {
     queries.push({ query: `"${brand}" Immobilien ${city}`, city });
+    queries.push({ query: `"${brand}" Beratung ${city}`, city });
     if (params.mode === "deep") {
       queries.push({ query: `"${brand}" Makler ${city}`, city });
     }

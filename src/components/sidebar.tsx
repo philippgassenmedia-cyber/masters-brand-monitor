@@ -108,13 +108,16 @@ export function Sidebar({
             <Link
               key={item.href}
               href={item.href}
-              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
+              className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${
                 active
                   ? "bg-stone-900 text-white shadow-sm"
                   : "text-stone-600 hover:bg-white/60 hover:text-stone-900"
               }`}
             >
-              <span className={active ? "text-white" : "text-stone-400"}>{item.icon}</span>
+              {active && (
+                <span className="absolute -left-1 top-1/2 h-5 w-1 -translate-y-1/2 rounded-full bg-white/80 badge-animate" />
+              )}
+              <span className={`transition-colors duration-150 ${active ? "text-white" : "text-stone-400"}`}>{item.icon}</span>
               {item.label}
             </Link>
           );
