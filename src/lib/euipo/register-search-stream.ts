@@ -1,9 +1,9 @@
-import { chromium } from "playwright-core";
 import { getSupabaseAdminClient } from "../supabase/server";
 import { matchAgainstStems } from "../dpma/matching";
 import { classifyTrademark } from "../dpma/classifier";
 import { getTopVariants } from "../dpma/variant-generator";
 import { trackGeminiCall } from "../gemini-usage";
+import { launchBrowser, createStealthContext, addStealthScripts } from "../dpma/browser";
 import type { DpmaKurierHit } from "../dpma/types";
 
 export type EuipoEvent =
@@ -24,16 +24,13 @@ export interface EuipoSearchOptions {
 }
 
 async function searchEuipoInTab(
-  ctx: Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>["newContext"]>>,
+  ctx: Awaited<ReturnType<typeof createStealthContext>>,
   searchTerm: string,
   klassen: string,
   seenAz: Set<string>,
 ): Promise<Array<{ az: string; name: string; applicant: string | null; status: string | null; classes: number[] }>> {
   const page = await ctx.newPage();
-  await page.addInitScript(() => {
-    Object.defineProperty(navigator, "webdriver", { get: () => false });
-    (window as unknown as Record<string, unknown>).chrome = { runtime: {} };
-  });
+  await addStealthScripts(page);
   const hits: Array<{ az: string; name: string; applicant: string | null; status: string | null; classes: number[] }> = [];
 
   try {
@@ -121,13 +118,8 @@ export async function* runEuipoSearchStream(
       const variants = getTopVariants(stem, 6);
       yield { type: "status", message: `EUIPO: Suche nach „${stem}" + ${variants.length - 1} Varianten` };
 
-      const browser = await chromium.launch({
-        headless: true, channel: "chrome",
-        args: ["--headless=new", "--disable-blink-features=AutomationControlled", "--no-sandbox"],
-      });
-      const ctx = await browser.newContext({
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      });
+      const browser = await launchBrowser();
+      const ctx = await createStealthContext(browser);
 
       const PARALLEL = 3;
       const seenAz = new Set<string>();

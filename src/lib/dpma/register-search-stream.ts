@@ -1,10 +1,10 @@
-import { chromium } from "playwright-core";
 import { getSupabaseAdminClient } from "../supabase/server";
 import { matchAgainstStems } from "./matching";
 import { classifyTrademark } from "./classifier";
 import { parseDpmaDetailPage } from "./detail-parser";
 import { resolveCompanyProfile } from "../resolve-company";
 import { getTopVariants } from "./variant-generator";
+import { launchBrowser, createStealthContext, addStealthScripts } from "./browser";
 import type { DpmaKurierHit } from "./types";
 
 export type DpmaEvent =
@@ -48,15 +48,12 @@ export async function* runDpmaSearchStream(
 
   // Hilfsfunktion: ein Tab sucht eine Variante und gibt Basis-Hits zurück
   async function searchVariantInTab(
-    ctx: Awaited<ReturnType<Awaited<ReturnType<typeof chromium.launch>>["newContext"]>>,
+    ctx: Awaited<ReturnType<typeof createStealthContext>>,
     searchTerm: string,
     seenAz: Set<string>,
   ): Promise<Array<{ az: string; name: string; status: string | null }>> {
     const tabPage = await ctx.newPage();
-    await tabPage.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => false });
-      (window as unknown as Record<string, unknown>).chrome = { runtime: {} };
-    });
+    await addStealthScripts(tabPage);
     const hits: Array<{ az: string; name: string; status: string | null }> = [];
 
     try {
@@ -117,14 +114,9 @@ export async function* runDpmaSearchStream(
       yield { type: "status", message: `Suche nach „${stem}" + ${variants.length - 1} Varianten parallel` };
 
       yield { type: "status", message: "Chrome wird gestartet (kann 10-20s dauern)…" };
-      const browser = await chromium.launch({
-        headless: true, channel: "chrome",
-        args: ["--headless=new", "--disable-blink-features=AutomationControlled", "--no-sandbox"],
-      });
+      const browser = await launchBrowser();
       yield { type: "status", message: "Chrome gestartet. Öffne DPMAregister…" };
-      const ctx = await browser.newContext({
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      });
+      const ctx = await createStealthContext(browser);
 
       // PHASE 1: Alle Varianten in parallelen Batches (3 Tabs gleichzeitig) durchsuchen
       const PARALLEL = 3;
@@ -146,10 +138,7 @@ export async function* runDpmaSearchStream(
 
       // PHASE 2: Detail-Seiten laden (sequentiell in einem Tab)
       const detailPage = await ctx.newPage();
-      await detailPage.addInitScript(() => {
-        Object.defineProperty(navigator, "webdriver", { get: () => false });
-        (window as unknown as Record<string, unknown>).chrome = { runtime: {} };
-      });
+      await addStealthScripts(detailPage);
 
       for (let i = 0; i < basicHits.length; i++) {
         const bh = basicHits[i];

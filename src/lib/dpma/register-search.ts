@@ -1,12 +1,12 @@
 // Nicht-streamende DPMA-Registersuche (Fallback).
 // Nutzt Playwright chromium mit headless=new Modus für register.dpma.de.
 
-import { chromium } from "playwright-core";
 import { getSupabaseAdminClient } from "../supabase/server";
 import { matchAgainstStems } from "./matching";
 import { classifyTrademark } from "./classifier";
 import { parseDpmaDetailPage } from "./detail-parser";
 import { resolveCompanyProfile } from "../resolve-company";
+import { launchBrowser, createStealthContext, addStealthScripts } from "./browser";
 import type { DpmaKurierHit } from "./types";
 
 export interface DpmaSearchResult {
@@ -28,21 +28,10 @@ export async function searchDpmaRegister(
     errors: [],
   };
 
-  const browser = await chromium.launch({
-    headless: true,
-    channel: "chrome",
-    args: [
-      "--headless=new",
-      "--disable-blink-features=AutomationControlled",
-      "--no-sandbox",
-    ],
-  });
+  const browser = await launchBrowser();
 
   try {
-    const ctx = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    });
+    const ctx = await createStealthContext(browser);
 
     const allHits: DpmaKurierHit[] = [];
     const seenAz = new Set<string>();
@@ -50,10 +39,7 @@ export async function searchDpmaRegister(
     for (const stem of stems) {
       try {
         const page = await ctx.newPage();
-        await page.addInitScript(() => {
-          Object.defineProperty(navigator, "webdriver", { get: () => false });
-          (window as unknown as Record<string, unknown>).chrome = { runtime: {} };
-        });
+        await addStealthScripts(page);
 
         await page.goto("https://register.dpma.de/DPMAregister/marke/basis", {
           timeout: 45_000,
