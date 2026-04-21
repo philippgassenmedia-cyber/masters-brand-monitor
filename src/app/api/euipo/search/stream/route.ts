@@ -2,7 +2,7 @@ import { getSupabaseServerClient, getSupabaseAdminClient } from "@/lib/supabase/
 import { runEuipoSearchStream } from "@/lib/euipo/register-search-stream";
 
 export const runtime = "nodejs";
-export const maxDuration = 600;
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
   const supabase = await getSupabaseServerClient();
