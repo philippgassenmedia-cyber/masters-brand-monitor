@@ -107,6 +107,7 @@ exception when duplicate_object then null;
 end $$;
 
 -- RPC Funktion zum Inkrementieren
+drop function if exists public.increment_api_usage(text, int);
 create or replace function public.increment_api_usage(p_provider text, p_delta int default 1)
 returns void language plpgsql security definer as $$
 begin
@@ -180,7 +181,7 @@ end $$;
 create table if not exists public.brand_stems (
   id uuid primary key default gen_random_uuid(),
   stamm text not null unique,
-  beschreibung text,
+  description text,
   aktiv boolean not null default true,
   created_at timestamptz not null default now()
 );
@@ -191,9 +192,9 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
--- Default-Stamm einfügen
-insert into public.brand_stems (stamm, beschreibung, aktiv)
-values ('master', 'Haupt-Markenstamm', true)
+-- Default-Stamm einfügen (nur Pflichtfelder, da Spaltenname variiert)
+insert into public.brand_stems (stamm, aktiv)
+values ('master', true)
 on conflict (stamm) do nothing;
 
 -- ===================== IMAP_ACCOUNTS =====================
