@@ -476,6 +476,9 @@ export function SettingsClient({
         </div>
       </section>
 
+      {/* DPMA Lokaler Agent */}
+      <DpmaAgentSection />
+
       {/* Geplante Scans */}
       <ScheduledScansSection />
 
@@ -768,6 +771,153 @@ function ScheduledScansSection() {
         ))}
       </div>
     </section>
+  );
+}
+
+function DpmaAgentSection() {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const installScript = `# ══════════════════════════════════════════════════
+# DPMA Register Agent — Einrichtung (macOS)
+# ══════════════════════════════════════════════════
+
+# 1. Projektordner anlegen
+mkdir -p ~/dpma-agent && cd ~/dpma-agent
+
+# 2. Repository klonen (einmalig)
+git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .
+
+# 3. Abhängigkeiten installieren
+npm install
+
+# 4. Umgebungsvariablen anlegen
+cat > .env.local << 'ENVEOF'
+NEXT_PUBLIC_SUPABASE_URL=DEINE_SUPABASE_URL
+SUPABASE_SERVICE_ROLE_KEY=DEIN_SERVICE_ROLE_KEY
+GEMINI_API_KEY=DEIN_GEMINI_KEY
+ENVEOF
+
+# 5. Agent starten
+npm run scan:agent
+
+# Der Agent läuft jetzt im Hintergrund und wartet
+# auf Scan-Aufträge aus der Web-Oberfläche.
+# Zum Stoppen: Ctrl+C`;
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(installScript);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <section className="glass mt-6 p-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold text-stone-900">DPMA Register-Agent</h2>
+          <p className="mt-1 text-xs text-stone-600">
+            Das DPMA-Register erfordert einen lokalen Browser. Der Agent läuft auf deinem Rechner
+            und führt Register-Scans aus, wenn du sie hier in der Web-Oberfläche startest.
+          </p>
+        </div>
+        <button
+          onClick={() => setOpen(!open)}
+          className="shrink-0 rounded-full border border-white/80 bg-white/60 px-4 py-2 text-xs font-semibold text-stone-700 hover:bg-white/90"
+        >
+          {open ? "Schließen" : "Einrichtung anzeigen"}
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-4 space-y-4">
+          {/* Schritt-für-Schritt Anleitung */}
+          <div className="space-y-3">
+            <Step n={1} title="Voraussetzungen">
+              <ul className="list-inside list-disc space-y-0.5">
+                <li>macOS oder Linux</li>
+                <li>Google Chrome installiert</li>
+                <li><a href="https://nodejs.org" target="_blank" rel="noopener" className="underline hover:text-stone-900">Node.js 20+</a> installiert</li>
+              </ul>
+            </Step>
+
+            <Step n={2} title="Projekt herunterladen">
+              <p>Öffne das <strong>Terminal</strong> (Spotlight → &quot;Terminal&quot;) und führe aus:</p>
+              <CodeBlock text={`mkdir -p ~/dpma-agent && cd ~/dpma-agent\ngit clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .\nnpm install`} />
+            </Step>
+
+            <Step n={3} title="Zugangsdaten eintragen">
+              <p>Erstelle die Datei <code className="rounded bg-stone-200/60 px-1 py-0.5 text-[11px]">.env.local</code> im Ordner <code className="rounded bg-stone-200/60 px-1 py-0.5 text-[11px]">~/dpma-agent</code> mit folgendem Inhalt:</p>
+              <CodeBlock text={`NEXT_PUBLIC_SUPABASE_URL=deine-supabase-url\nSUPABASE_SERVICE_ROLE_KEY=dein-service-role-key\nGEMINI_API_KEY=dein-gemini-key`} />
+              <p className="mt-1 text-stone-500">Die Werte findest du in deinem Supabase-Dashboard und Google AI Studio.</p>
+            </Step>
+
+            <Step n={4} title="Agent starten">
+              <CodeBlock text={`cd ~/dpma-agent\nnpm run scan:agent`} />
+              <p className="mt-1">Der Agent prüft alle 30 Sekunden ob ein DPMA-Scan in der Web-Oberfläche geplant wurde und führt ihn automatisch aus.</p>
+            </Step>
+
+            <Step n={5} title="Scan auslösen">
+              <p>Geh auf <strong>Einstellungen → Geplante Scans</strong>, wähle Typ <strong>&quot;DPMA&quot;</strong> oder <strong>&quot;Web + DPMA&quot;</strong>,
+              klick <strong>&quot;Planen&quot;</strong> und dann <strong>&quot;Jetzt&quot;</strong>. Der Agent nimmt den Auftrag auf.</p>
+            </Step>
+          </div>
+
+          {/* Komplettes Setup-Script */}
+          <div className="rounded-xl border border-white/60 bg-white/40 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-semibold text-stone-700">Komplettes Setup-Script (zum Kopieren)</span>
+              <button
+                onClick={copyToClipboard}
+                className="rounded-full bg-stone-900 px-3 py-1 text-[10px] font-semibold text-white hover:bg-stone-800"
+              >
+                {copied ? "Kopiert!" : "Kopieren"}
+              </button>
+            </div>
+            <pre className="max-h-48 overflow-auto rounded-lg bg-stone-900 p-3 text-[11px] leading-relaxed text-stone-300">
+              {installScript}
+            </pre>
+          </div>
+
+          <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 p-3 text-xs text-stone-700">
+            <strong>Hinweis:</strong> Der Agent muss auf deinem Rechner laufen, da das DPMA-Register
+            Cloud-Browser blockiert. Solange der Agent läuft, kannst du Scans bequem über die Web-Oberfläche starten.
+            Zum Stoppen drücke <code className="rounded bg-stone-200/60 px-1 py-0.5">Ctrl+C</code> im Terminal.
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3">
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-900 text-[10px] font-bold text-white">
+        {n}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 text-sm font-semibold text-stone-900">{title}</div>
+        <div className="text-xs leading-relaxed text-stone-600">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function CodeBlock({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="group relative mt-1.5">
+      <pre className="rounded-lg bg-stone-900 p-2.5 text-[11px] leading-relaxed text-stone-300 overflow-x-auto">
+        {text}
+      </pre>
+      <button
+        onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+        className="absolute right-2 top-2 rounded bg-stone-700 px-2 py-0.5 text-[9px] text-stone-300 opacity-0 transition hover:bg-stone-600 group-hover:opacity-100"
+      >
+        {copied ? "Kopiert" : "Kopieren"}
+      </button>
+    </div>
   );
 }
 
