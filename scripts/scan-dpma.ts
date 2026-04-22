@@ -152,13 +152,20 @@ async function main() {
   const browser = await chromium.launch({
     headless: true,
     ...(isCI
-      ? { args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] }
-      : { channel: "chrome", args: ["--headless=new", "--disable-blink-features=AutomationControlled", "--no-sandbox"] }
+      ? {}
+      : { channel: "chrome" }
     ),
+    args: [
+      "--headless=new",
+      "--disable-blink-features=AutomationControlled",
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+    ],
   });
 
   const ctx = await browser.newContext({
-    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   });
 
   const seenAz = new Set<string>();
@@ -179,8 +186,16 @@ async function main() {
       });
 
       try {
-        await page.goto("https://register.dpma.de/DPMAregister/marke/basis", { timeout: 45_000 });
-        await page.waitForSelector('input[name="marke"]', { timeout: 20_000 });
+        await page.goto("https://register.dpma.de/DPMAregister/marke/basis", { timeout: 45_000, waitUntil: "domcontentloaded" });
+        // Warte auf F5-Challenge + Formular
+        await page.waitForTimeout(5000);
+        const hasForm = await page.$('input[name="marke"]');
+        if (!hasForm) {
+          const bodySnippet = ((await page.textContent("body")) ?? "").replace(/\s+/g, " ").slice(0, 200);
+          console.log(`      ⚠️  Formular nicht gefunden. Seite: ${bodySnippet}`);
+          await page.close();
+          continue;
+        }
         await page.fill('input[name="marke"]', variant);
         await page.fill('input[name="klassen"]', klassen);
 
@@ -204,6 +219,25 @@ async function main() {
         await page.click('input[name="rechercheStarten"]');
         await page.waitForLoadState("networkidle", { timeout: 45_000 });
         await page.waitForTimeout(3000);
+
+        // Debug: Seitentitel + Anzahl Tabellen-Zeilen loggen
+        const title = await page.title();
+        const bodyText = (await page.textContent("body") ?? "").slice(0, 500);
+        const tableRows = await page.$$("table tr");
+        console.log(`      📄 Titel: ${title}`);
+        console.log(`      📄 Zeilen: ${tableRows.length}`);
+        if (tableRows.length === 0) {
+          // Prüfe ob Bot-Protection oder Session-Fehler
+          if (bodyText.includes("Javascript") || bodyText.includes("TSPD") || bodyText.includes("support ID")) {
+            console.log(`      ⚠️  F5 Bot-Protection erkannt!`);
+          } else if (bodyText.includes("Session") || bodyText.includes("abgelaufen")) {
+            console.log(`      ⚠️  Session abgelaufen`);
+          } else if (bodyText.includes("keine Treffer") || bodyText.includes("Keine Ergebnisse")) {
+            console.log(`      ℹ️  Keine Treffer für diese Suche`);
+          } else {
+            console.log(`      📄 Body (500 chars): ${bodyText.replace(/\s+/g, " ").slice(0, 300)}`);
+          }
+        }
 
         // Ergebnisse aus Tabelle
         let pageHits = 0;
