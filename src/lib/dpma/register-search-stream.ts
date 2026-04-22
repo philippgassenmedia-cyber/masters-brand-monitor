@@ -52,14 +52,17 @@ export async function* runDpmaSearchStream(
     page: Page,
     searchTerm: string,
     seenAz: Set<string>,
+    logs: string[],
   ): Promise<{ hits: Array<{ az: string; name: string; status: string | null }>; diag: string }> {
     const hits: Array<{ az: string; name: string; status: string | null }> = [];
     let diag = "";
     try {
+      logs.push(`→ Lade DPMA-Formular (${searchTerm})…`);
       await page.goto("https://register.dpma.de/DPMAregister/marke/basis", {
         timeout: 40_000, waitUntil: "domcontentloaded",
       });
       await page.waitForSelector('input[name="marke"]', { timeout: 15_000 });
+      logs.push(`✓ DPMA-Formular geladen · URL: ${page.url()}`);
 
       await page.fill('input[name="marke"]', "");
       await page.fill('input[name="marke"]', searchTerm);
@@ -87,8 +90,8 @@ export async function* runDpmaSearchStream(
 
       // Submit + wait for navigation away from the form page
       const preSubmitUrl = page.url();
+      logs.push(`→ Formular abschicken für „${searchTerm}"…`);
       await page.click('input[name="rechercheStarten"]');
-      // Wait for URL change (traditional form) OR content change (AJAX fallback)
       try {
         await page.waitForFunction(
           (before: string) => window.location.href !== before,
@@ -97,7 +100,6 @@ export async function* runDpmaSearchStream(
         );
         await page.waitForLoadState("domcontentloaded", { timeout: 15_000 });
       } catch {
-        // URL didn't change — might be AJAX or error page, wait for any content
         await page.waitForTimeout(5000);
       }
       await page.waitForTimeout(1500);
@@ -107,6 +109,8 @@ export async function* runDpmaSearchStream(
       const pageText = (await page.textContent("body").catch(() => "")) ?? "";
       const noResults = /keine.*treffer|0 treffer|no.*result/i.test(pageText);
       const linkCount = (await page.$$('a[href*="/DPMAregister/marke/register/"]')).length;
+      logs.push(`✓ Ergebnisseite: „${pageTitle.slice(0, 40)}" · ${currentUrl.slice(-50)}`);
+      logs.push(`  → ${noResults ? "Keine Treffer" : linkCount + " Marken-Links gefunden"}`);
 
       // Extract Aktenzeichen from detail-page links (reliable regardless of table layout)
       const collectFromPage = async () => {
@@ -118,7 +122,6 @@ export async function* runDpmaSearchStream(
           const az = azMatch[1];
           if (seenAz.has(az)) continue;
           seenAz.add(az);
-          // Extract name + status from the row via in-page JS
           const rowData = await link.evaluate((el) => {
             const row = el.closest("tr");
             if (!row) return "";
@@ -150,9 +153,10 @@ export async function* runDpmaSearchStream(
       }
 
       const rowCount = (await page.$$("table tr")).length;
-      diag = `URL: …${currentUrl.slice(-50)} · ${rowCount} Zeilen · ${linkCount} Links · ${noResults ? "KEIN TREFFER" : hits.length + " AZ gefunden"}`;
+      diag = `${rowCount} Tabellenzeilen · ${linkCount} Links · ${noResults ? "KEIN TREFFER" : hits.length + " AZ"}`;
     } catch (e) {
-      diag = `Fehler: ${(e as Error).message.slice(0, 120)}`;
+      diag = `FEHLER: ${(e as Error).message.slice(0, 150)}`;
+      logs.push(`✗ Fehler in searchOnPage: ${(e as Error).message.slice(0, 150)}`);
     }
     return { hits, diag };
   }
@@ -186,6 +190,7 @@ export async function* runDpmaSearchStream(
       try {
         searchPage = await ctx.newPage();
         await addStealthScripts(searchPage);
+        yield { type: "status", message: `✓ Browser-Tab geöffnet für Stamm „${stem}"` };
       } catch (e) {
         yield { type: "error", message: `Suche „${stem}": Such-Tab konnte nicht geöffnet werden — ${(e as Error).message.slice(0, 150)}` };
         errorCount++;
@@ -195,7 +200,9 @@ export async function* runDpmaSearchStream(
       for (let i = 0; i < searchTerms.length; i++) {
         const v = searchTerms[i];
         yield { type: "status", message: `[${i + 1}/${searchTerms.length}] Suche: „${v}"` };
-        const { hits, diag } = await searchOnPage(searchPage, v, seenAz);
+        const logs: string[] = [];
+        const { hits, diag } = await searchOnPage(searchPage, v, seenAz, logs);
+        for (const msg of logs) yield { type: "status", message: msg };
         basicHits.push(...hits);
         yield { type: "status", message: `[${i + 1}/${searchTerms.length}] „${v}": ${diag}` };
         if (!browser.isConnected()) {
