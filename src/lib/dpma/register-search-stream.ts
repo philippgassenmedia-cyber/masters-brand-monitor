@@ -51,15 +51,16 @@ export async function* runDpmaSearchStream(
     ctx: Awaited<ReturnType<typeof createStealthContext>>,
     searchTerm: string,
     seenAz: Set<string>,
-  ): Promise<Array<{ az: string; name: string; status: string | null }>> {
+  ): Promise<{ hits: Array<{ az: string; name: string; status: string | null }>; diag: string }> {
     let tabPage;
     try {
       tabPage = await ctx.newPage();
     } catch {
-      return [];
+      return { hits: [], diag: "Tab konnte nicht geöffnet werden" };
     }
     await addStealthScripts(tabPage);
     const hits: Array<{ az: string; name: string; status: string | null }> = [];
+    let diag = "";
 
     try {
       await tabPage.goto("https://register.dpma.de/DPMAregister/marke/basis", { timeout: 45_000 });
@@ -94,15 +95,21 @@ export async function* runDpmaSearchStream(
       await tabPage.waitForLoadState("networkidle", { timeout: 45_000 });
       await tabPage.waitForTimeout(3000);
 
+      const pageTitle = await tabPage.title().catch(() => "");
+      const pageText = (await tabPage.textContent("body").catch(() => "")) ?? "";
+      const noResults = /keine.*treffer|0 treffer|no.*result/i.test(pageText);
+      const allRows = await tabPage.$$("table tr");
+
       // Paginieren
       while (true) {
         const rows = await tabPage.$$("table tr");
         for (const row of rows) {
           const cells = await row.$$("td");
-          if (cells.length < 4) continue;
+          if (cells.length < 2) continue;
           const cellTexts: string[] = [];
           for (const cell of cells) cellTexts.push((await cell.textContent())?.trim().replace(/\s+/g, " ") ?? "");
-          const azIdx = cellTexts.findIndex((t) => /^\d{10,}$/.test(t.replace(/\s/g, "")));
+          // Aktenzeichen: 7–14 Ziffern (ältere DE-Marken haben 7–9 Stellen, neue 10–12)
+          const azIdx = cellTexts.findIndex((t) => /^\d{7,14}$/.test(t.replace(/\s/g, "")));
           if (azIdx === -1) continue;
           const az = cellTexts[azIdx].replace(/\s/g, "");
           if (seenAz.has(az)) continue;
@@ -113,11 +120,13 @@ export async function* runDpmaSearchStream(
         if (!next) break;
         try { await next.click(); await tabPage.waitForLoadState("networkidle", { timeout: 20_000 }); await tabPage.waitForTimeout(2000); } catch { break; }
       }
+
+      diag = `Seite: „${pageTitle.slice(0, 40)}" · ${allRows.length} Tabellenzeilen · ${noResults ? "Keine-Treffer-Meldung" : "Tabelle gefunden"} · ${hits.length} AZ extrahiert`;
     } catch (e) {
-      console.error("[DPMA searchVariantInTab]", (e as Error).message ?? String(e));
+      diag = `Fehler: ${(e as Error).message.slice(0, 120)}`;
     }
     try { await tabPage.close(); } catch {}
-    return hits;
+    return { hits, diag };
   }
 
   for (const stem of stems) {
@@ -139,9 +148,9 @@ export async function* runDpmaSearchStream(
       for (let i = 0; i < searchTerms.length; i++) {
         const v = searchTerms[i];
         yield { type: "status", message: `[${i + 1}/${searchTerms.length}] Suche: „${v}"` };
-        const hits = await searchVariantInTab(ctx, v, seenAz);
+        const { hits, diag } = await searchVariantInTab(ctx, v, seenAz);
         basicHits.push(...hits);
-        yield { type: "status", message: `[${i + 1}/${searchTerms.length}] fertig: ${basicHits.length} Treffer bisher` };
+        yield { type: "status", message: `[${i + 1}/${searchTerms.length}] „${v}": ${diag}` };
         if (!browser.isConnected()) {
           yield { type: "error", message: `Suche „${stem}": Browser während Variantensuche getrennt` };
           errorCount++;

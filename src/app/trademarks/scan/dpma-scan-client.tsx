@@ -30,7 +30,7 @@ export function DpmaScanClient() {
   const [nurDE, setNurDE] = useState(true);
   const [nurInKraft, setNurInKraft] = useState(true);
   const [selectedKlassen, setSelectedKlassen] = useState<Set<number>>(DEFAULT_KLASSEN);
-  const [zeitraumMonate, setZeitraumMonate] = useState(3);
+  const [zeitraumMonate, setZeitraumMonate] = useState(0);
   const [klassenOpen, setKlassenOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [showSuccess, setShowSuccess] = useState(false);

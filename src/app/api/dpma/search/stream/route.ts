@@ -22,7 +22,7 @@ export async function POST(req: Request) {
   const nurDE = body.nurDE !== false;
   const nurInKraft = body.nurInKraft !== false;
   const klassen = typeof body.klassen === "string" ? body.klassen : "36 37 42";
-  const zeitraumMonate = typeof body.zeitraumMonate === "number" ? body.zeitraumMonate : 3;
+  const zeitraumMonate = typeof body.zeitraumMonate === "number" ? body.zeitraumMonate : 0;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
