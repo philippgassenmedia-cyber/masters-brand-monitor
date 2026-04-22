@@ -85,40 +85,63 @@ export async function* runDpmaSearchStream(
       }
       try { await page.click('input[name="radioAnsicht"][value="tabelle"]'); } catch {}
 
-      await page.click('input[name="rechercheStarten"]');
-      await page.waitForLoadState("domcontentloaded", { timeout: 30_000 });
-      await page.waitForTimeout(3000);
+      // Submit + wait for the resulting navigation to complete
+      await Promise.all([
+        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30_000 }),
+        page.click('input[name="rechercheStarten"]'),
+      ]);
+      await page.waitForTimeout(2000);
 
+      const currentUrl = page.url();
       const pageTitle = await page.title().catch(() => "");
       const pageText = (await page.textContent("body").catch(() => "")) ?? "";
       const noResults = /keine.*treffer|0 treffer|no.*result/i.test(pageText);
-      const allRows = await page.$$("table tr");
 
-      while (true) {
-        const rows = await page.$$("table tr");
-        for (const row of rows) {
-          const cells = await row.$$("td");
-          if (cells.length < 2) continue;
-          const cellTexts: string[] = [];
-          for (const cell of cells) cellTexts.push((await cell.textContent())?.trim().replace(/\s+/g, " ") ?? "");
-          const azIdx = cellTexts.findIndex((t) => /^\d{7,14}$/.test(t.replace(/\s/g, "")));
-          if (azIdx === -1) continue;
-          const az = cellTexts[azIdx].replace(/\s/g, "");
+      // Extract Aktenzeichen from detail-page links (reliable regardless of table layout)
+      const collectFromPage = async () => {
+        const azLinks = await page.$$('a[href*="/DPMAregister/marke/register/"]');
+        for (const link of azLinks) {
+          const href = await link.getAttribute("href");
+          const azMatch = href?.match(/\/marke\/register\/(\d{7,14})\//);
+          if (!azMatch) continue;
+          const az = azMatch[1];
           if (seenAz.has(az)) continue;
           seenAz.add(az);
-          hits.push({ az, name: cellTexts[azIdx + 1] ?? "", status: cellTexts[azIdx + 2] ?? null });
+          // Extract name + status from the row via in-page JS
+          const rowData = await link.evaluate((el) => {
+            const row = el.closest("tr");
+            if (!row) return "";
+            return Array.from(row.querySelectorAll("td"))
+              .map((td) => td.textContent?.trim().replace(/\s+/g, " ") ?? "")
+              .join("\t");
+          });
+          const parts = rowData.split("\t").filter((p) => p.length > 0);
+          const azIdx = parts.findIndex((p) => p.replace(/\s/g, "") === az);
+          const name = azIdx !== -1 ? (parts[azIdx + 1] ?? parts[0] ?? "") : (parts[1] ?? "");
+          const status = azIdx !== -1 ? (parts[azIdx + 2] ?? null) : null;
+          hits.push({ az, name: name.trim(), status: status?.trim() ?? null });
         }
-        const next = await page.$('a:has-text(">>"), a:has-text("nächste"), a[title*="nächste"]');
-        if (!next) break;
-        try {
-          await next.click();
-          await page.waitForLoadState("domcontentloaded", { timeout: 15_000 });
-          await page.waitForTimeout(1500);
-        } catch { break; }
+      };
+
+      if (!noResults) {
+        while (true) {
+          await collectFromPage();
+          const next = await page.$('a:has-text(">>"), a:has-text("nächste"), a[title*="nächste"]');
+          if (!next) break;
+          try {
+            await Promise.all([
+              page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15_000 }),
+              next.click(),
+            ]);
+            await page.waitForTimeout(1500);
+          } catch { break; }
+        }
       }
-      diag = `„${pageTitle.slice(0, 35)}" · ${allRows.length} Zeilen · ${noResults ? "keine Treffer" : "Tabelle"} · ${hits.length} AZ`;
+
+      const rowCount = (await page.$$("table tr")).length;
+      diag = `„${pageTitle.slice(0, 35)}" · ${currentUrl.slice(-40)} · ${rowCount} Tabellenzeilen · ${noResults ? "keine Treffer" : hits.length + " AZ"}`;
     } catch (e) {
-      diag = `Fehler: ${(e as Error).message.slice(0, 100)}`;
+      diag = `Fehler: ${(e as Error).message.slice(0, 120)}`;
     }
     return { hits, diag };
   }
