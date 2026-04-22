@@ -3,7 +3,6 @@ import { matchAgainstStems } from "./matching";
 import { classifyTrademark } from "./classifier";
 import { parseDpmaDetailPage } from "./detail-parser";
 import { resolveCompanyProfile } from "../resolve-company";
-import { getTopVariants } from "./variant-generator";
 import { launchBrowser, createStealthContext, addStealthScripts } from "./browser";
 import type { DpmaKurierHit } from "./types";
 
@@ -33,7 +32,7 @@ export async function* runDpmaSearchStream(
   const nurDE = opts.nurDE !== false;
   const nurInKraft = opts.nurInKraft !== false;
   const klassen = opts.klassen ?? "36 37 42";
-  const zeitraumMonate = opts.zeitraumMonate ?? 3;
+  const zeitraumMonate = opts.zeitraumMonate ?? 0;
   const db = getSupabaseAdminClient();
   let totalFound = 0;
   let newTrademarks = 0;
@@ -65,7 +64,10 @@ export async function* runDpmaSearchStream(
       await tabPage.goto("https://register.dpma.de/DPMAregister/marke/basis", { timeout: 45_000 });
       await tabPage.waitForSelector('input[name="marke"]', { timeout: 20_000 });
 
+      // Suchfeld leeren, dann Suchterm eintragen
+      await tabPage.fill('input[name="marke"]', "");
       await tabPage.fill('input[name="marke"]', searchTerm);
+      await tabPage.fill('input[name="klassen"]', "");
       await tabPage.fill('input[name="klassen"]', klassen);
 
       if (nurDE) {
@@ -99,24 +101,29 @@ export async function* runDpmaSearchStream(
           if (cells.length < 4) continue;
           const cellTexts: string[] = [];
           for (const cell of cells) cellTexts.push((await cell.textContent())?.trim().replace(/\s+/g, " ") ?? "");
-          const az = cellTexts[3]?.replace(/\s/g, "") ?? "";
-          if (!az || !/^\d+$/.test(az) || seenAz.has(az)) continue;
+          const azIdx = cellTexts.findIndex((t) => /^\d{10,}$/.test(t.replace(/\s/g, "")));
+          if (azIdx === -1) continue;
+          const az = cellTexts[azIdx].replace(/\s/g, "");
+          if (seenAz.has(az)) continue;
           seenAz.add(az);
-          hits.push({ az, name: cellTexts[4] ?? "", status: cellTexts[5] ?? null });
+          hits.push({ az, name: cellTexts[azIdx + 1] ?? "", status: cellTexts[azIdx + 2] ?? null });
         }
         const next = await tabPage.$('a:has-text(">>"), a:has-text("nächste"), a[title*="nächste"]');
         if (!next) break;
         try { await next.click(); await tabPage.waitForLoadState("networkidle", { timeout: 20_000 }); await tabPage.waitForTimeout(2000); } catch { break; }
       }
-    } catch {}
+    } catch (e) {
+      console.error("[DPMA searchVariantInTab]", (e as Error).message ?? String(e));
+    }
     try { await tabPage.close(); } catch {}
     return hits;
   }
 
   for (const stem of stems) {
     try {
-      const variants = getTopVariants(stem, 8);
-      yield { type: "status", message: `Suche nach „${stem}" + ${variants.length - 1} Varianten (sequentiell)` };
+      const s = stem.charAt(0).toUpperCase() + stem.slice(1).toLowerCase();
+      const searchTerms = [s, `${s}*`, `*${s}`];
+      yield { type: "status", message: `Suche nach „${stem}" (exakt + Wildcard-Präfix + Wildcard-Suffix)` };
 
       yield { type: "status", message: "Chrome wird gestartet (kann 10-20s dauern)…" };
       const browser = await launchBrowser();
@@ -127,23 +134,23 @@ export async function* runDpmaSearchStream(
       const seenAz = new Set<string>();
       const basicHits: Array<{ az: string; name: string; status: string | null }> = [];
 
-      for (let i = 0; i < variants.length; i++) {
-        const v = variants[i];
-        yield { type: "status", message: `[${i + 1}/${variants.length}] Suche: „${v}"` };
+      for (let i = 0; i < searchTerms.length; i++) {
+        const v = searchTerms[i];
+        yield { type: "status", message: `[${i + 1}/${searchTerms.length}] Suche: „${v}"` };
         const hits = await searchVariantInTab(ctx, v, seenAz);
         basicHits.push(...hits);
-        yield { type: "status", message: `[${i + 1}/${variants.length}] fertig: ${basicHits.length} Treffer bisher` };
+        yield { type: "status", message: `[${i + 1}/${searchTerms.length}] fertig: ${basicHits.length} Treffer bisher` };
         if (!browser.isConnected()) {
           yield { type: "error", message: `Suche „${stem}": Browser während Variantensuche getrennt` };
           errorCount++;
           break;
         }
         // Kurze Pause zwischen Anfragen um Bot-Detection zu reduzieren
-        if (i < variants.length - 1) await new Promise((r) => setTimeout(r, 1500));
+        if (i < searchTerms.length - 1) await new Promise((r) => setTimeout(r, 1500));
       }
 
       yield { type: "browser:loaded", trefferCount: basicHits.length };
-      yield { type: "status", message: `${basicHits.length} Treffer aus ${variants.length} Varianten. Lade Details…` };
+      yield { type: "status", message: `${basicHits.length} Treffer aus ${searchTerms.length} Suchen. Lade Details…` };
 
       if (basicHits.length === 0 || !browser.isConnected()) {
         try { await browser.close(); } catch {}
@@ -193,7 +200,7 @@ export async function* runDpmaSearchStream(
       }
 
       try { await browser.close(); } catch {}
-      yield { type: "status", message: `Chrome geschlossen. ${allHits.length} Treffer (${variants.length} Varianten).` };
+      yield { type: "status", message: `Chrome geschlossen. ${allHits.length} Treffer (${searchTerms.length} Suchen).` };
     } catch (e) {
       errorCount++;
       yield { type: "error", message: `Suche „${stem}": ${(e as Error).message.slice(0, 200)}` };
