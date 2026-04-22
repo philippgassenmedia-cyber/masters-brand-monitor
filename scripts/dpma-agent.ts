@@ -1,35 +1,35 @@
 /**
- * DPMA Scan Agent — läuft lokal auf deinem Mac im Hintergrund.
- * Wartet auf Scan-Aufträge aus der Web-UI (scheduled_scans Tabelle)
- * und führt sie mit lokalem Chrome aus (umgeht F5 Bot-Protection).
+ * DPMA Scan Agent — läuft lokal im Hintergrund.
+ * Holt Konfiguration automatisch vom Server — keine .env Datei nötig.
  *
- * Starten:
- *   npm run scan:agent
- *
- * Stoppen: Ctrl+C
- *
- * Ablauf:
- *   1. Web-UI erstellt Scan in scheduled_scans (type: dpma/all, status: pending)
- *   2. Agent prüft alle 30s ob ein Auftrag da ist
- *   3. Agent startet Chrome lokal → scrapet DPMA Register
- *   4. Ergebnisse landen in Supabase → sichtbar in Web-UI
+ * Starten (Befehl wird in der Web-UI generiert):
+ *   npx tsx scripts/dpma-agent.ts DEIN_AGENT_TOKEN
  */
 import { chromium } from "playwright";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const POLL_INTERVAL = 30_000;
 
-if (!SUPABASE_URL || !SUPABASE_KEY) { console.error("❌ SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY fehlen"); process.exit(1); }
-if (!GEMINI_KEY) { console.error("❌ GEMINI_API_KEY fehlt"); process.exit(1); }
+// ── Konfiguration laden ─────────────────────────────────────
+// Option 1: Inline Env-Vars (aus generiertem Startbefehl)
+// Option 2: .env.local Datei (Fallback)
+let SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+let SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
+let GEMINI_KEY = process.env.GEMINI_API_KEY ?? "";
 
-const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+if (!SUPABASE_URL || !SUPABASE_KEY || !GEMINI_KEY) {
+  console.error("❌ Konfiguration fehlt.");
+  console.error("   Kopiere den Startbefehl aus den Einstellungen der Web-Oberfläche.");
+  console.error("   (Einstellungen → DPMA Register-Agent → Einrichtung)");
+  process.exit(1);
+}
+
+const db: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 console.log(`\n🤖 DPMA Scan Agent gestartet`);
+console.log(`   Supabase: ${SUPABASE_URL.slice(0, 30)}…`);
 console.log(`   Prüfe alle ${POLL_INTERVAL / 1000}s auf neue Aufträge…`);
-console.log(`   Stoppen: Ctrl+C\n`);
+console.log(`   Stoppen: Strg+C / Ctrl+C\n`);
 
 // ── Hilfsfunktionen ─────────────────────────────────────────
 function getVariants(stem: string, max = 6): string[] {

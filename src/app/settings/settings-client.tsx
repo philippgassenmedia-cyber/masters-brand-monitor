@@ -777,10 +777,44 @@ function ScheduledScansSection() {
 function DpmaAgentSection() {
   const [open, setOpen] = useState(false);
   const [os, setOs] = useState<"windows" | "mac">("windows");
+  const [config, setConfig] = useState<{ NEXT_PUBLIC_SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string; GEMINI_API_KEY: string } | null>(null);
+  const [configLoading, setConfigLoading] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
 
-  const oneLineSetup = {
-    windows: `powershell -Command "mkdir C:\\dpma-agent -Force; cd C:\\dpma-agent; git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . 2>$null; npm install; npm run scan:agent"`,
-    mac: `mkdir -p ~/dpma-agent && cd ~/dpma-agent && git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . 2>/dev/null; npm install && npm run scan:agent`,
+  const loadConfig = async () => {
+    setConfigLoading(true);
+    setConfigError(null);
+    try {
+      const res = await fetch("/api/agent/setup");
+      if (!res.ok) throw new Error("Konfiguration konnte nicht geladen werden");
+      const data = await res.json();
+      setConfig(data.config);
+    } catch (e) {
+      setConfigError((e as Error).message);
+    } finally {
+      setConfigLoading(false);
+    }
+  };
+
+  const handleOpen = () => {
+    setOpen(!open);
+    if (!open && !config) loadConfig();
+  };
+
+  // Startbefehl mit eingebetteten Keys — kein .env nötig
+  const envInline = config ? {
+    windows: `$env:SUPABASE_URL="${config.NEXT_PUBLIC_SUPABASE_URL}"; $env:SUPABASE_SERVICE_ROLE_KEY="${config.SUPABASE_SERVICE_ROLE_KEY}"; $env:GEMINI_API_KEY="${config.GEMINI_API_KEY}"; `,
+    mac: `SUPABASE_URL="${config.NEXT_PUBLIC_SUPABASE_URL}" SUPABASE_SERVICE_ROLE_KEY="${config.SUPABASE_SERVICE_ROLE_KEY}" GEMINI_API_KEY="${config.GEMINI_API_KEY}" `,
+  } : null;
+
+  const installCmd = {
+    windows: `mkdir C:\\dpma-agent -Force; cd C:\\dpma-agent; git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . 2>$null; npm install`,
+    mac: `mkdir -p ~/dpma-agent && cd ~/dpma-agent && git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . 2>/dev/null; npm install`,
+  };
+
+  const startCmd = {
+    windows: `cd C:\\dpma-agent; ${envInline?.windows ?? ""}npm run scan:agent`,
+    mac: `cd ~/dpma-agent && ${envInline?.mac ?? ""}npm run scan:agent`,
   };
 
   const steps = {
@@ -791,10 +825,6 @@ function DpmaAgentSection() {
         { name: "Git", url: "https://git-scm.com/download/win", hint: "Installer mit Standard-Einstellungen" },
       ],
       openTerminal: <>Drücke <kbd className="rounded border border-stone-300 bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold">Win + X</kbd> → <strong>Terminal</strong> oder <strong>PowerShell</strong></>,
-      cloneCmd: `mkdir C:\\dpma-agent\ncd C:\\dpma-agent\ngit clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .\nnpm install`,
-      envPath: "C:\\dpma-agent\\.env.local",
-      envHint: "Rechtsklick auf den Ordner → Neue Textdatei → Umbenennen zu .env.local → Mit Editor öffnen",
-      startCmd: `cd C:\\dpma-agent\nnpm run scan:agent`,
       stopKey: "Strg+C",
     },
     mac: {
@@ -803,10 +833,6 @@ function DpmaAgentSection() {
         { name: "Node.js (LTS)", url: "https://nodejs.org", hint: "Installer herunterladen und ausführen" },
       ],
       openTerminal: <>Öffne <strong>Spotlight</strong> (Cmd + Leertaste) → tippe <strong>Terminal</strong> → Enter</>,
-      cloneCmd: `mkdir -p ~/dpma-agent && cd ~/dpma-agent\ngit clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .\nnpm install`,
-      envPath: "~/dpma-agent/.env.local",
-      envHint: "Im Terminal: nano ~/dpma-agent/.env.local — einfügen, Ctrl+X, Y, Enter",
-      startCmd: `cd ~/dpma-agent\nnpm run scan:agent`,
       stopKey: "Ctrl+C",
     },
   };
@@ -851,63 +877,67 @@ function DpmaAgentSection() {
             </button>
           </div>
 
-          {/* Schnellstart */}
-          <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-4">
-            <div className="mb-2 text-sm font-semibold text-emerald-900">Schnellstart — 1 Befehl</div>
-            <p className="mb-2 text-xs text-stone-600">
-              {os === "windows" ? "PowerShell öffnen (Win+X → Terminal), " : "Terminal öffnen, "}
-              diesen Befehl einfügen und Enter drücken:
-            </p>
-            <CodeBlock text={oneLineSetup[os]} />
-            <p className="mt-2 text-[11px] text-stone-500">
-              Danach nur noch die Zugangsdaten eintragen (Schritt 3 unten).
-            </p>
-          </div>
+          {configLoading && (
+            <div className="flex items-center gap-2 text-xs text-stone-500">
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-stone-300 border-t-stone-700" />
+              Lade Konfiguration…
+            </div>
+          )}
+          {configError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-2 text-xs text-rose-800">{configError}</div>
+          )}
 
-          {/* Ausführliche Anleitung */}
+          {config && (
+            <>
+              {/* Einmalige Installation */}
+              <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
+                <div className="mb-1 text-sm font-semibold text-stone-900">Schritt 1 — Einmalig installieren</div>
+                <p className="mb-2 text-xs text-stone-600">
+                  {s.openTerminal}. Dann diesen Befehl einfügen:
+                </p>
+                <CodeBlock text={installCmd[os]} />
+              </div>
+
+              {/* Agent starten */}
+              <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-4">
+                <div className="mb-1 text-sm font-semibold text-emerald-900">Schritt 2 — Agent starten</div>
+                <p className="mb-2 text-xs text-stone-600">
+                  Diesen Befehl jedes Mal ausführen wenn der Agent gestartet werden soll.
+                  Die Zugangsdaten sind bereits enthalten — keine Konfigurationsdatei nötig.
+                </p>
+                <CodeBlock text={startCmd[os]} />
+                <p className="mt-2 text-[11px] text-stone-500">
+                  Fenster offen lassen. Zum Stoppen: <kbd className="rounded border border-stone-300 bg-stone-100 px-1 py-0.5 text-[10px] font-semibold">{s.stopKey}</kbd>
+                </p>
+              </div>
+
+              {/* Scan starten */}
+              <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
+                <div className="mb-1 text-sm font-semibold text-stone-900">Schritt 3 — Scan starten</div>
+                <p className="text-xs text-stone-600">
+                  Weiter unten auf dieser Seite unter <strong>Geplante Scans</strong>: Typ <strong>DPMA</strong> wählen → <strong>Planen</strong> → <strong>Jetzt</strong>.
+                  Der Agent führt den Scan automatisch aus.
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* Voraussetzungen */}
           <details className="group">
             <summary className="cursor-pointer text-xs font-semibold text-stone-600 hover:text-stone-900">
-              Ausführliche Anleitung anzeigen
+              Voraussetzungen anzeigen
             </summary>
-            <div className="mt-4 space-y-4">
-              <Step n={1} title="Voraussetzungen">
-                <p className="mb-1.5">Diese Programme müssen installiert sein:</p>
-                <div className="space-y-1.5">
-                  {s.prereqs.map((p) => (
-                    <a key={p.name} href={p.url} target="_blank" rel="noopener"
-                      className="flex items-center gap-2 rounded-lg border border-white/70 bg-white/50 px-3 py-2 text-xs hover:bg-white/80 transition">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-stone-400">
-                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-                      </svg>
-                      <span className="font-semibold text-stone-800">{p.name}</span>
-                      {p.hint && <span className="text-stone-400">— {p.hint}</span>}
-                    </a>
-                  ))}
-                </div>
-              </Step>
-
-              <Step n={2} title="Terminal öffnen">
-                <p>{s.openTerminal}</p>
-              </Step>
-
-              <Step n={3} title="Zugangsdaten eintragen">
-                <p>Erstelle die Datei <code className="rounded bg-stone-200/60 px-1 py-0.5 text-[11px]">{s.envPath}</code></p>
-                <p className="mt-0.5 text-stone-400">{s.envHint}</p>
-                <CodeBlock text={`NEXT_PUBLIC_SUPABASE_URL=deine-url-hier\nSUPABASE_SERVICE_ROLE_KEY=dein-key-hier\nGEMINI_API_KEY=dein-gemini-key-hier`} />
-              </Step>
-
-              <Step n={4} title="Agent starten">
-                <CodeBlock text={s.startCmd} />
-                <p className="mt-1.5">
-                  Das Fenster offen lassen — der Agent wartet auf Aufträge von dieser Webseite.
-                  Zum Stoppen: <kbd className="rounded border border-stone-300 bg-stone-100 px-1 py-0.5 text-[10px] font-semibold">{s.stopKey}</kbd>
-                </p>
-              </Step>
-
-              <Step n={5} title="Scan starten">
-                <p>Weiter unten unter <strong>Geplante Scans</strong>: Typ <strong>DPMA</strong> wählen → <strong>Planen</strong> → <strong>Jetzt</strong>.
-                Der Agent auf deinem PC startet den Scan automatisch.</p>
-              </Step>
+            <div className="mt-3 space-y-1.5">
+              {s.prereqs.map((p) => (
+                <a key={p.name} href={p.url} target="_blank" rel="noopener"
+                  className="flex items-center gap-2 rounded-lg border border-white/70 bg-white/50 px-3 py-2 text-xs hover:bg-white/80 transition">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-stone-400">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                  </svg>
+                  <span className="font-semibold text-stone-800">{p.name}</span>
+                  {p.hint && <span className="text-stone-400">— {p.hint}</span>}
+                </a>
+              ))}
             </div>
           </details>
 
