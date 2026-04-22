@@ -87,7 +87,7 @@ async function runDpmaScan(scanId: string) {
     const vars = getVariants(stem,6);
     for (let vi=0;vi<vars.length;vi++) {
       if(vi>0){console.log(`   ⏳ 15s…`);await new Promise(r=>setTimeout(r,15000));}
-      const ctx = await browser.newContext({userAgent:"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"});
+      const ctx = await browser.newContext({userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"});
       const page = await ctx.newPage();
       await page.addInitScript(()=>{Object.defineProperty(navigator,"webdriver",{get:()=>false});(window as unknown as Record<string,unknown>).chrome={runtime:{}};});
       try {
@@ -124,7 +124,7 @@ async function runDpmaScan(scanId: string) {
 
   // Details + Analyse
   console.log(`   📊 ${hits.length} Treffer → Details + Bewertung…`);
-  const dCtx = await browser.newContext({userAgent:"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"});
+  const dCtx = await browser.newContext({userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"});
   const dPage = await dCtx.newPage();
   await dPage.addInitScript(()=>{Object.defineProperty(navigator,"webdriver",{get:()=>false});});
   let newC=0,updC=0;

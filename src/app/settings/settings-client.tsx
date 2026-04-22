@@ -779,11 +779,13 @@ function DpmaAgentSection() {
   const [copied, setCopied] = useState(false);
 
   const installScript = `# ══════════════════════════════════════════════════
-# DPMA Register Agent — Einrichtung (macOS)
+# DPMA Register Agent — Einrichtung (Windows)
+# Öffne PowerShell und führe diese Befehle aus.
 # ══════════════════════════════════════════════════
 
 # 1. Projektordner anlegen
-mkdir -p ~/dpma-agent && cd ~/dpma-agent
+mkdir C:\\dpma-agent
+cd C:\\dpma-agent
 
 # 2. Repository klonen (einmalig)
 git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .
@@ -791,19 +793,18 @@ git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git 
 # 3. Abhängigkeiten installieren
 npm install
 
-# 4. Umgebungsvariablen anlegen
-cat > .env.local << 'ENVEOF'
+# 4. Umgebungsvariablen anlegen (Werte anpassen!)
+@"
 NEXT_PUBLIC_SUPABASE_URL=DEINE_SUPABASE_URL
 SUPABASE_SERVICE_ROLE_KEY=DEIN_SERVICE_ROLE_KEY
 GEMINI_API_KEY=DEIN_GEMINI_KEY
-ENVEOF
+"@ | Out-File -Encoding UTF8 .env.local
 
 # 5. Agent starten
 npm run scan:agent
 
-# Der Agent läuft jetzt im Hintergrund und wartet
-# auf Scan-Aufträge aus der Web-Oberfläche.
-# Zum Stoppen: Ctrl+C`;
+# Der Agent läuft jetzt und wartet auf Aufträge.
+# Zum Stoppen: Strg+C`;
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(installScript);
@@ -831,42 +832,56 @@ npm run scan:agent
 
       {open && (
         <div className="mt-4 space-y-4">
-          {/* Schritt-für-Schritt Anleitung */}
           <div className="space-y-3">
-            <Step n={1} title="Voraussetzungen">
-              <ul className="list-inside list-disc space-y-0.5">
-                <li>macOS oder Linux</li>
-                <li>Google Chrome installiert</li>
-                <li><a href="https://nodejs.org" target="_blank" rel="noopener" className="underline hover:text-stone-900">Node.js 20+</a> installiert</li>
+            <Step n={1} title="Voraussetzungen installieren">
+              <ul className="list-inside list-disc space-y-1">
+                <li>
+                  <a href="https://www.google.com/chrome/" target="_blank" rel="noopener" className="underline hover:text-stone-900">Google Chrome</a> installiert
+                </li>
+                <li>
+                  <a href="https://nodejs.org" target="_blank" rel="noopener" className="underline hover:text-stone-900">Node.js 20+</a> installiert
+                  <span className="ml-1 text-stone-400">(LTS-Version herunterladen, Installer ausführen)</span>
+                </li>
+                <li>
+                  <a href="https://git-scm.com/download/win" target="_blank" rel="noopener" className="underline hover:text-stone-900">Git für Windows</a> installiert
+                  <span className="ml-1 text-stone-400">(Standard-Einstellungen beibehalten)</span>
+                </li>
               </ul>
             </Step>
 
-            <Step n={2} title="Projekt herunterladen">
-              <p>Öffne das <strong>Terminal</strong> (Spotlight → &quot;Terminal&quot;) und führe aus:</p>
-              <CodeBlock text={`mkdir -p ~/dpma-agent && cd ~/dpma-agent\ngit clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .\nnpm install`} />
+            <Step n={2} title="PowerShell öffnen">
+              <p>Drücke <code className="rounded bg-stone-200/60 px-1.5 py-0.5 text-[11px] font-semibold">Windows + X</code> und wähle <strong>&quot;Windows PowerShell&quot;</strong> oder <strong>&quot;Terminal&quot;</strong>.</p>
             </Step>
 
-            <Step n={3} title="Zugangsdaten eintragen">
-              <p>Erstelle die Datei <code className="rounded bg-stone-200/60 px-1 py-0.5 text-[11px]">.env.local</code> im Ordner <code className="rounded bg-stone-200/60 px-1 py-0.5 text-[11px]">~/dpma-agent</code> mit folgendem Inhalt:</p>
+            <Step n={3} title="Projekt herunterladen">
+              <p>Kopiere diese Befehle in die PowerShell und drücke Enter:</p>
+              <CodeBlock text={`mkdir C:\\dpma-agent\ncd C:\\dpma-agent\ngit clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .\nnpm install`} />
+            </Step>
+
+            <Step n={4} title="Zugangsdaten eintragen">
+              <p>Erstelle die Datei <code className="rounded bg-stone-200/60 px-1 py-0.5 text-[11px]">C:\dpma-agent\.env.local</code> mit einem Texteditor (z.B. Notepad). Inhalt:</p>
               <CodeBlock text={`NEXT_PUBLIC_SUPABASE_URL=deine-supabase-url\nSUPABASE_SERVICE_ROLE_KEY=dein-service-role-key\nGEMINI_API_KEY=dein-gemini-key`} />
-              <p className="mt-1 text-stone-500">Die Werte findest du in deinem Supabase-Dashboard und Google AI Studio.</p>
+              <p className="mt-1.5 text-stone-500">Ersetze die Werte mit deinen echten Schlüsseln aus dem Supabase-Dashboard und Google AI Studio.</p>
             </Step>
 
-            <Step n={4} title="Agent starten">
-              <CodeBlock text={`cd ~/dpma-agent\nnpm run scan:agent`} />
-              <p className="mt-1">Der Agent prüft alle 30 Sekunden ob ein DPMA-Scan in der Web-Oberfläche geplant wurde und führt ihn automatisch aus.</p>
+            <Step n={5} title="Agent starten">
+              <CodeBlock text={`cd C:\\dpma-agent\nnpm run scan:agent`} />
+              <p className="mt-1">Der Agent prüft alle 30 Sekunden ob ein DPMA-Scan geplant wurde.</p>
+              <p className="mt-0.5 text-stone-500">Tipp: Lass das PowerShell-Fenster offen — solange es läuft, ist der Agent aktiv.</p>
             </Step>
 
-            <Step n={5} title="Scan auslösen">
-              <p>Geh auf <strong>Einstellungen → Geplante Scans</strong>, wähle Typ <strong>&quot;DPMA&quot;</strong> oder <strong>&quot;Web + DPMA&quot;</strong>,
-              klick <strong>&quot;Planen&quot;</strong> und dann <strong>&quot;Jetzt&quot;</strong>. Der Agent nimmt den Auftrag auf.</p>
+            <Step n={6} title="Scan über die Webseite starten">
+              <p>Geh auf <strong>Einstellungen → Geplante Scans</strong> (weiter unten auf dieser Seite),
+              wähle Typ <strong>&quot;DPMA&quot;</strong> oder <strong>&quot;Web + DPMA&quot;</strong>,
+              klick <strong>&quot;Planen&quot;</strong> und dann <strong>&quot;Jetzt&quot;</strong>.</p>
+              <p className="mt-1">Der Agent auf deinem PC nimmt den Auftrag automatisch auf und startet Chrome im Hintergrund.</p>
             </Step>
           </div>
 
           {/* Komplettes Setup-Script */}
           <div className="rounded-xl border border-white/60 bg-white/40 p-4">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold text-stone-700">Komplettes Setup-Script (zum Kopieren)</span>
+              <span className="text-xs font-semibold text-stone-700">Komplettes Setup-Script für PowerShell</span>
               <button
                 onClick={copyToClipboard}
                 className="rounded-full bg-stone-900 px-3 py-1 text-[10px] font-semibold text-white hover:bg-stone-800"
@@ -880,9 +895,10 @@ npm run scan:agent
           </div>
 
           <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 p-3 text-xs text-stone-700">
-            <strong>Hinweis:</strong> Der Agent muss auf deinem Rechner laufen, da das DPMA-Register
-            Cloud-Browser blockiert. Solange der Agent läuft, kannst du Scans bequem über die Web-Oberfläche starten.
-            Zum Stoppen drücke <code className="rounded bg-stone-200/60 px-1 py-0.5">Ctrl+C</code> im Terminal.
+            <strong>Warum lokal?</strong> Das DPMA-Register blockiert automatisierte Zugriffe aus der Cloud.
+            Der Agent nutzt deinen lokalen Chrome-Browser, der vom DPMA nicht blockiert wird.
+            Solange das PowerShell-Fenster offen ist, kannst du Scans bequem über diese Webseite starten.
+            Zum Stoppen: <code className="rounded bg-stone-200/60 px-1 py-0.5">Strg+C</code> im PowerShell-Fenster.
           </div>
         </div>
       )}
