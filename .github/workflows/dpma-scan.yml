@@ -1,0 +1,36 @@
+name: DPMA Register-Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      stems:
+        description: "Markenstämme (kommasepariert)"
+        default: "master"
+      klassen:
+        description: "Nizza-Klassen"
+        default: "36 37 42"
+  schedule:
+    - cron: "0 6 * * 1"
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright Chrome
+        run: npx playwright install chromium
+      - name: Run DPMA Register Scan
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          npx tsx scripts/scan-dpma.ts \
+            --stems "${{ github.event.inputs.stems || 'master' }}" \
+            --klassen "${{ github.event.inputs.klassen || '36 37 42' }}"
