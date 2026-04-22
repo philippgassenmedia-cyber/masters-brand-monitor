@@ -177,9 +177,19 @@ async function main() {
     const variants = getVariants(stem, 6);
     console.log(`\n📋 Stamm "${stem}" — ${variants.length} Varianten`);
 
-    for (const variant of variants) {
+    for (let vi = 0; vi < variants.length; vi++) {
+      const variant = variants[vi];
       console.log(`   🔎 Suche "${variant}"…`);
-      const page = await ctx.newPage();
+
+      // Zwischen Varianten 15s Pause + neuen Context (frische Cookies)
+      if (vi > 0) {
+        console.log(`      ⏳ Warte 15s (Bot-Protection Cooldown)…`);
+        await new Promise(r => setTimeout(r, 15000));
+      }
+      const freshCtx = vi === 0 ? ctx : await browser.newContext({
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      });
+      const page = await freshCtx.newPage();
       await page.addInitScript(() => {
         Object.defineProperty(navigator, "webdriver", { get: () => false });
         (window as unknown as Record<string, unknown>).chrome = { runtime: {} };
@@ -194,6 +204,7 @@ async function main() {
           const bodySnippet = ((await page.textContent("body")) ?? "").replace(/\s+/g, " ").slice(0, 200);
           console.log(`      ⚠️  Formular nicht gefunden. Seite: ${bodySnippet}`);
           await page.close();
+          if (vi > 0) await freshCtx.close();
           continue;
         }
         await page.fill('input[name="marke"]', variant);
@@ -263,6 +274,7 @@ async function main() {
         console.log(`      ❌ ${(e as Error).message.slice(0, 100)}`);
       }
       await page.close();
+      if (vi > 0) await freshCtx.close();
     }
   }
 
