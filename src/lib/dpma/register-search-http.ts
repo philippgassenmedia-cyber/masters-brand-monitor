@@ -71,6 +71,7 @@ async function fetchFollowRedirects(
   init: RequestInit,
   cookieJar: Record<string, string>,
   log: string[],
+  timeoutMs = 25_000,
   maxRedirects = 8,
 ): Promise<{ res: Response; html: string; cookieJar: Record<string, string> }> {
   let currentUrl = url;
@@ -84,7 +85,12 @@ async function fetchFollowRedirects(
       ...(currentInit.headers as Record<string, string> ?? {}),
       ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     };
-    const res = await fetch(currentUrl, { ...currentInit, headers, redirect: "manual" });
+    const res = await fetch(currentUrl, {
+      ...currentInit,
+      headers,
+      redirect: "manual",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
     // Neue Cookies mergen
     cookieJar = mergeCookies(cookieJar, extractCookies(res));
@@ -236,6 +242,7 @@ export async function searchDpmaHttp(
       },
       cookieJar,
       log,
+      30_000,
     );
     cookieJar = updatedJar;
 
@@ -270,7 +277,7 @@ export async function searchDpmaHttp(
 
         log.push(`→ Seite ${pageNum}: ${nextUrl.slice(-60)}`);
         const { html: pageHtml, cookieJar: pageJar } = await fetchFollowRedirects(
-          nextUrl, { method: "GET" }, cookieJar, log,
+          nextUrl, { method: "GET" }, cookieJar, log, 20_000,
         );
         cookieJar = pageJar;
         currentHtml = pageHtml;
