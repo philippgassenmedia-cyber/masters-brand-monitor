@@ -4,9 +4,8 @@ import { classifyTrademark } from "./classifier";
 import { parseDpmaDetailPage } from "./detail-parser";
 import { resolveCompanyProfile } from "../resolve-company";
 import { getTopVariants } from "./variant-generator";
-import { launchBrowser, createStealthContext, addStealthScripts } from "./browser";
+import { searchDpmaHttp } from "./register-search-http";
 import type { DpmaKurierHit } from "./types";
-import type { Page } from "playwright-core";
 
 export type DpmaEvent =
   | { type: "status"; message: string }
@@ -27,6 +26,22 @@ export interface DpmaSearchOptions {
   zeitraumMonate?: number;
 }
 
+const DETAIL_HEADERS: Record<string, string> = {
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  "Accept-Language": "de-DE,de;q=0.9,en;q=0.5",
+};
+
+async function fetchDetailPage(az: string): Promise<string> {
+  const url = `https://register.dpma.de/DPMAregister/marke/register/${az}/DE`;
+  const res = await fetch(url, {
+    headers: DETAIL_HEADERS,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const html = await res.text();
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+}
+
 export async function* runDpmaSearchStream(
   stems: string[],
   opts: DpmaSearchOptions = {},
@@ -41,208 +56,43 @@ export async function* runDpmaSearchStream(
   let updated = 0;
   let errorCount = 0;
 
-  // PHASE 1: Browser-Scraping
+  // PHASE 1: HTTP-Scraping (kein Browser nötig)
   yield { type: "browser:start" };
-  yield { type: "status", message: "Starte Chrome und öffne DPMAregister…" };
+  yield { type: "status", message: "Starte DPMA-Suche via HTTP…" };
 
   const allHits: DpmaKurierHit[] = [];
-
-  // Sucht einen Begriff auf einer bereits geöffneten Seite — kein Tab-Open/Close pro Suche
-  async function searchOnPage(
-    page: Page,
-    searchTerm: string,
-    seenAz: Set<string>,
-    logs: string[],
-  ): Promise<{ hits: Array<{ az: string; name: string; status: string | null }>; diag: string }> {
-    const hits: Array<{ az: string; name: string; status: string | null }> = [];
-    let diag = "";
-    try {
-      logs.push(`→ Lade DPMA-Formular (${searchTerm})…`);
-      await page.goto("https://register.dpma.de/DPMAregister/marke/basis", {
-        timeout: 40_000, waitUntil: "domcontentloaded",
-      });
-      await page.waitForSelector('input[name="marke"]', { timeout: 15_000 });
-      logs.push(`✓ DPMA-Formular geladen · URL: ${page.url()}`);
-
-      await page.fill('input[name="marke"]', "");
-      await page.fill('input[name="marke"]', searchTerm);
-      await page.fill('input[name="klassen"]', "");
-      await page.fill('input[name="klassen"]', klassen);
-
-      if (nurDE) {
-        const de = page.locator('input[name="demarke"]');
-        if (!(await de.isChecked())) await de.check();
-        const em = page.locator('input[name="emmarke"]');
-        if (await em.isChecked()) await em.uncheck();
-        const ir = page.locator('input[name="irmarke"]');
-        if (await ir.isChecked()) await ir.uncheck();
-      }
-      if (nurInKraft) {
-        try { const c = page.locator('input[name="marke_inkraft_zeigen_chk"]'); if (!(await c.isChecked())) await c.check(); } catch {}
-      }
-      if (zeitraumMonate > 0) {
-        const von = new Date();
-        von.setMonth(von.getMonth() - zeitraumMonate);
-        const vonStr = `${String(von.getDate()).padStart(2, "0")}.${String(von.getMonth() + 1).padStart(2, "0")}.${von.getFullYear()}`;
-        try { await page.fill('input[name="bwt_DateVonId"]', vonStr); } catch {}
-      }
-      try { await page.click('input[name="radioAnsicht"][value="tabelle"]'); } catch {}
-
-      // Submit + wait for navigation away from the form page
-      const preSubmitUrl = page.url();
-      logs.push(`→ Formular abschicken für „${searchTerm}"…`);
-      await page.click('input[name="rechercheStarten"]');
-      try {
-        await page.waitForFunction(
-          (before: string) => window.location.href !== before,
-          preSubmitUrl,
-          { timeout: 30_000 },
-        );
-        await page.waitForLoadState("domcontentloaded", { timeout: 15_000 });
-      } catch {
-        await page.waitForTimeout(5000);
-      }
-      await page.waitForTimeout(1500);
-
-      const currentUrl = page.url();
-      const pageTitle = await page.title().catch(() => "");
-      const pageText = (await page.textContent("body").catch(() => "")) ?? "";
-      const noResults = /keine.*treffer|0 treffer|no.*result/i.test(pageText);
-      const linkCount = (await page.$$('a[href*="/DPMAregister/marke/register/"]')).length;
-      // Seiteninhalt-Snapshot für Diagnose (ersten 300 Zeichen bereinigt)
-      const bodySnippet = pageText.replace(/\s+/g, " ").trim().slice(0, 300);
-      logs.push(`✓ Ergebnisseite: „${pageTitle.slice(0, 50)}" · ${currentUrl}`);
-      logs.push(`  Inhalt: ${bodySnippet}`);
-      logs.push(`  → ${noResults ? "KEIN TREFFER (Text-Match)" : linkCount + " Marken-Links"} · ${(await page.$$("table tr")).length} Tabellenzeilen`);
-
-      // Extract Aktenzeichen from detail-page links (reliable regardless of table layout)
-      const collectFromPage = async () => {
-        const azLinks = await page.$$('a[href*="/DPMAregister/marke/register/"]');
-        for (const link of azLinks) {
-          const href = await link.getAttribute("href");
-          const azMatch = href?.match(/\/marke\/register\/(\d{7,14})\//);
-          if (!azMatch) continue;
-          const az = azMatch[1];
-          if (seenAz.has(az)) continue;
-          seenAz.add(az);
-          const rowData = await link.evaluate((el) => {
-            const row = el.closest("tr");
-            if (!row) return "";
-            return Array.from(row.querySelectorAll("td"))
-              .map((td) => td.textContent?.trim().replace(/\s+/g, " ") ?? "")
-              .join("\t");
-          });
-          const parts = rowData.split("\t").filter((p) => p.length > 0);
-          const azIdx = parts.findIndex((p) => p.replace(/\s/g, "") === az);
-          const name = azIdx !== -1 ? (parts[azIdx + 1] ?? parts[0] ?? "") : (parts[1] ?? "");
-          const status = azIdx !== -1 ? (parts[azIdx + 2] ?? null) : null;
-          hits.push({ az, name: name.trim(), status: status?.trim() ?? null });
-        }
-      };
-
-      if (!noResults) {
-        while (true) {
-          await collectFromPage();
-          const next = await page.$('a:has-text(">>"), a:has-text("nächste"), a[title*="nächste"]');
-          if (!next) break;
-          try {
-            await Promise.all([
-              page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15_000 }),
-              next.click(),
-            ]);
-            await page.waitForTimeout(1500);
-          } catch { break; }
-        }
-      }
-
-      const rowCount = (await page.$$("table tr")).length;
-      diag = `${rowCount} Tabellenzeilen · ${linkCount} Links · ${noResults ? "KEIN TREFFER" : hits.length + " AZ"}`;
-    } catch (e) {
-      diag = `FEHLER: ${(e as Error).message.slice(0, 150)}`;
-      logs.push(`✗ Fehler in searchOnPage: ${(e as Error).message.slice(0, 150)}`);
-    }
-    return { hits, diag };
-  }
-
-  // Einen einzigen Browser für alle Stämme → nur 1 WebSocket-Verbindung zu Browserless
-  yield { type: "status", message: "Chrome wird gestartet (kann 10-20s dauern)…" };
-  let browser;
-  try {
-    browser = await launchBrowser();
-  } catch (e) {
-    yield { type: "error", message: `Browser-Start fehlgeschlagen: ${(e as Error).message.slice(0, 200)}` };
-    yield { type: "done", totalFound: 0, newTrademarks: 0, updated: 0, errors: 1 };
-    return;
-  }
-  yield { type: "status", message: `Chrome gestartet. Verbunden: ${browser.isConnected()} · Version: ${browser.version()}` };
-  const ctx = await createStealthContext(browser);
 
   for (const stem of stems) {
     try {
       const s = stem.charAt(0).toUpperCase() + stem.slice(1).toLowerCase();
-      // Phonetik auf 3 begrenzen um Browserless-Rate-Limits zu vermeiden
       const phonetic = getTopVariants(stem, 3).filter((v) => v.toLowerCase() !== stem.toLowerCase()).slice(0, 3);
       const searchTerms = [s, `${s}*`, `*${s}`, ...phonetic];
       yield { type: "status", message: `Suche nach „${stem}" — ${searchTerms.length} Begriffe (exakt, Wildcards, ${phonetic.length} phonetisch)` };
 
-      // PHASE 1: Varianten sequentiell auf einer einzigen Tab durchsuchen
       const seenAz = new Set<string>();
       const basicHits: Array<{ az: string; name: string; status: string | null }> = [];
-
-      let searchPage: Page | undefined;
-      try {
-        searchPage = await ctx.newPage();
-        await addStealthScripts(searchPage);
-        yield { type: "status", message: `✓ Browser-Tab geöffnet für Stamm „${stem}"` };
-      } catch (e) {
-        yield { type: "error", message: `Suche „${stem}": Such-Tab konnte nicht geöffnet werden — ${(e as Error).message.slice(0, 150)}` };
-        errorCount++;
-        continue;
-      }
 
       for (let i = 0; i < searchTerms.length; i++) {
         const v = searchTerms[i];
         yield { type: "status", message: `[${i + 1}/${searchTerms.length}] Suche: „${v}"` };
-        const logs: string[] = [];
-        const { hits, diag } = await searchOnPage(searchPage, v, seenAz, logs);
-        for (const msg of logs) yield { type: "status", message: msg };
+        const log: string[] = [];
+        const { hits, diag } = await searchDpmaHttp(v, { nurDE, nurInKraft, klassen, zeitraumMonate }, seenAz, log);
+        for (const msg of log) yield { type: "status", message: msg };
         basicHits.push(...hits);
         yield { type: "status", message: `[${i + 1}/${searchTerms.length}] „${v}": ${diag}` };
-        if (!browser.isConnected()) {
-          yield { type: "error", message: `Suche „${stem}": Browser während Variantensuche getrennt` };
-          errorCount++;
-          break;
-        }
-        // Kurze Pause zwischen Anfragen um Bot-Detection zu reduzieren
-        if (i < searchTerms.length - 1) await new Promise((r) => setTimeout(r, 1500));
+        if (i < searchTerms.length - 1) await new Promise((r) => setTimeout(r, 1000));
       }
-
-      try { await searchPage.close(); } catch {}
 
       yield { type: "browser:loaded", trefferCount: basicHits.length };
       yield { type: "status", message: `${basicHits.length} Treffer aus ${searchTerms.length} Suchen. Lade Details…` };
 
-      if (basicHits.length === 0 || !browser.isConnected()) {
-        continue;
-      }
+      if (basicHits.length === 0) continue;
 
-      // PHASE 2: Detail-Seiten laden (sequentiell in einem Tab)
-      let detailPage;
-      try {
-        detailPage = await ctx.newPage();
-      } catch (e) {
-        yield { type: "error", message: `Suche „${stem}": Detail-Tab konnte nicht geöffnet werden — ${(e as Error).message.slice(0, 150)}` };
-        errorCount++;
-        continue;
-      }
-      await addStealthScripts(detailPage);
-
+      // PHASE 2: Detail-Seiten via HTTP laden
       for (let i = 0; i < basicHits.length; i++) {
         const bh = basicHits[i];
         try {
-          await detailPage.goto(`https://register.dpma.de/DPMAregister/marke/register/${bh.az}/DE`, { timeout: 20_000 });
-          await detailPage.waitForTimeout(2500);
-          const rawText = await detailPage.textContent("body") ?? "";
+          const rawText = await fetchDetailPage(bh.az);
           const detail = parseDpmaDetailPage(rawText);
 
           yield { type: "status", message: `[${i + 1}/${basicHits.length}] ${bh.name || bh.az} — ${detail.inhaber?.slice(0, 40) ?? "—"}` };
@@ -265,9 +115,9 @@ export async function* runDpmaSearchStream(
             inhaber_anschrift: null, vertreter: null, markenform: null, schutzdauer_bis: null,
           });
         }
+        if (i < basicHits.length - 1) await new Promise((r) => setTimeout(r, 500));
       }
 
-      try { await detailPage.close(); } catch {}
       yield { type: "status", message: `${stem}: ${allHits.length} Treffer gesamt.` };
     } catch (e) {
       errorCount++;
@@ -275,8 +125,7 @@ export async function* runDpmaSearchStream(
     }
   }
 
-  try { await browser.close(); } catch {}
-  yield { type: "status", message: "Chrome geschlossen." };
+  yield { type: "status", message: "HTTP-Suche abgeschlossen." };
 
   // Deduplizieren
   const seen = new Set<string>();
