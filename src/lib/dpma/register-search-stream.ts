@@ -52,7 +52,12 @@ export async function* runDpmaSearchStream(
     searchTerm: string,
     seenAz: Set<string>,
   ): Promise<Array<{ az: string; name: string; status: string | null }>> {
-    const tabPage = await ctx.newPage();
+    let tabPage;
+    try {
+      tabPage = await ctx.newPage();
+    } catch {
+      return [];
+    }
     await addStealthScripts(tabPage);
     const hits: Array<{ az: string; name: string; status: string | null }> = [];
 
@@ -104,40 +109,57 @@ export async function* runDpmaSearchStream(
         try { await next.click(); await tabPage.waitForLoadState("networkidle", { timeout: 20_000 }); await tabPage.waitForTimeout(2000); } catch { break; }
       }
     } catch {}
-    await tabPage.close();
+    try { await tabPage.close(); } catch {}
     return hits;
   }
 
   for (const stem of stems) {
     try {
       const variants = getTopVariants(stem, 8);
-      yield { type: "status", message: `Suche nach „${stem}" + ${variants.length - 1} Varianten parallel` };
+      yield { type: "status", message: `Suche nach „${stem}" + ${variants.length - 1} Varianten (sequentiell)` };
 
       yield { type: "status", message: "Chrome wird gestartet (kann 10-20s dauern)…" };
       const browser = await launchBrowser();
       yield { type: "status", message: "Chrome gestartet. Öffne DPMAregister…" };
       const ctx = await createStealthContext(browser);
 
-      // PHASE 1: Alle Varianten in parallelen Batches (3 Tabs gleichzeitig) durchsuchen
-      const PARALLEL = 3;
+      // PHASE 1: Varianten sequentiell durchsuchen (1 Tab, kein Parallelbetrieb → weniger Bot-Detection)
       const seenAz = new Set<string>();
       const basicHits: Array<{ az: string; name: string; status: string | null }> = [];
 
-      for (let i = 0; i < variants.length; i += PARALLEL) {
-        const batch = variants.slice(i, i + PARALLEL);
-        yield { type: "status", message: `Parallel: ${batch.map(v => `„${v}"`).join(", ")}` };
-        const batchResults = await Promise.all(
-          batch.map((v) => searchVariantInTab(ctx, v, seenAz)),
-        );
-        for (const hits of batchResults) basicHits.push(...hits);
-        yield { type: "status", message: `Batch fertig: ${basicHits.length} Treffer bisher` };
+      for (let i = 0; i < variants.length; i++) {
+        const v = variants[i];
+        yield { type: "status", message: `[${i + 1}/${variants.length}] Suche: „${v}"` };
+        const hits = await searchVariantInTab(ctx, v, seenAz);
+        basicHits.push(...hits);
+        yield { type: "status", message: `[${i + 1}/${variants.length}] fertig: ${basicHits.length} Treffer bisher` };
+        if (!browser.isConnected()) {
+          yield { type: "error", message: `Suche „${stem}": Browser während Variantensuche getrennt` };
+          errorCount++;
+          break;
+        }
+        // Kurze Pause zwischen Anfragen um Bot-Detection zu reduzieren
+        if (i < variants.length - 1) await new Promise((r) => setTimeout(r, 1500));
       }
 
       yield { type: "browser:loaded", trefferCount: basicHits.length };
       yield { type: "status", message: `${basicHits.length} Treffer aus ${variants.length} Varianten. Lade Details…` };
 
+      if (basicHits.length === 0 || !browser.isConnected()) {
+        try { await browser.close(); } catch {}
+        continue;
+      }
+
       // PHASE 2: Detail-Seiten laden (sequentiell in einem Tab)
-      const detailPage = await ctx.newPage();
+      let detailPage;
+      try {
+        detailPage = await ctx.newPage();
+      } catch (e) {
+        yield { type: "error", message: `Suche „${stem}": Detail-Tab konnte nicht geöffnet werden — ${(e as Error).message.slice(0, 150)}` };
+        errorCount++;
+        try { await browser.close(); } catch {}
+        continue;
+      }
       await addStealthScripts(detailPage);
 
       for (let i = 0; i < basicHits.length; i++) {
@@ -170,7 +192,7 @@ export async function* runDpmaSearchStream(
         }
       }
 
-      await browser.close();
+      try { await browser.close(); } catch {}
       yield { type: "status", message: `Chrome geschlossen. ${allHits.length} Treffer (${variants.length} Varianten).` };
     } catch (e) {
       errorCount++;
