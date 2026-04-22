@@ -74,9 +74,14 @@ export function DpmaScanClient() {
   }, [state.phase, state.source]);
 
   const start = () => {
-    // DPMA läuft nur lokal (npm run dpma-scan), nie via Cloud-API
-    const endpoints = ["/api/euipo/search/stream"];
-    startScan(endpoints, { nurDE, nurInKraft, klassen: klassenString, zeitraumMonate }, "euipo");
+    const endpoints =
+      source === "both"
+        ? ["/api/dpma/search/stream", "/api/euipo/search/stream"]
+        : source === "euipo"
+          ? ["/api/euipo/search/stream"]
+          : ["/api/dpma/search/stream"];
+    const contextSource = source === "euipo" ? "euipo" : "dpma";
+    startScan(endpoints, { nurDE, nurInKraft, klassen: klassenString, zeitraumMonate }, contextSource);
   };
 
   // Derived state — only relevant when this source type is active
@@ -124,7 +129,7 @@ export function DpmaScanClient() {
             <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">Register</div>
             <div className="inline-flex rounded-full border border-white/80 bg-orange-50/70 p-1 shadow-[0_2px_12px_rgba(120,90,60,0.06)] backdrop-blur-md">
               {([
-                { value: "dpma" as ScanSource, label: "DPMA (DE) — lokal" },
+                { value: "dpma" as ScanSource, label: "DPMA (DE)" },
                 { value: "euipo" as ScanSource, label: "EUIPO (EU)" },
                 { value: "both" as ScanSource, label: "Beide" },
               ]).map((opt) => (
@@ -288,17 +293,12 @@ export function DpmaScanClient() {
                 {kpis.errors > 0 && <MiniStat label="Fehler" value={kpis.errors} tone="red" />}
               </div>
             )}
-            {source === "dpma" ? (
-              <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-2.5 text-xs text-amber-900">
-                <div className="mb-1 font-semibold">Lokal ausführen</div>
-                <code className="select-all font-mono text-[11px]">npm run dpma-scan</code>
-              </div>
-            ) : !running ? (
+            {!running ? (
               <button
                 onClick={start}
                 className="h-10 rounded-full bg-stone-900 px-6 text-xs font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] hover:bg-stone-800"
               >
-                {source === "both" ? "EUIPO + DPMA starten" : "EUIPO durchsuchen"}
+                {source === "dpma" ? "DPMA durchsuchen" : source === "euipo" ? "EUIPO durchsuchen" : "DPMA + EUIPO durchsuchen"}
               </button>
             ) : (
               <button
