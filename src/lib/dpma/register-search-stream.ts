@@ -6,6 +6,7 @@ import { resolveCompanyProfile } from "../resolve-company";
 import { getTopVariants } from "./variant-generator";
 import { launchBrowser, createStealthContext, addStealthScripts } from "./browser";
 import type { DpmaKurierHit } from "./types";
+import type { Page } from "playwright-core";
 
 export type DpmaEvent =
   | { type: "status"; message: string }
@@ -46,73 +47,60 @@ export async function* runDpmaSearchStream(
 
   const allHits: DpmaKurierHit[] = [];
 
-  // Hilfsfunktion: ein Tab sucht eine Variante und gibt Basis-Hits zurück
-  async function searchVariantInTab(
-    ctx: Awaited<ReturnType<typeof createStealthContext>>,
+  // Sucht einen Begriff auf einer bereits geöffneten Seite — kein Tab-Open/Close pro Suche
+  async function searchOnPage(
+    page: Page,
     searchTerm: string,
     seenAz: Set<string>,
   ): Promise<{ hits: Array<{ az: string; name: string; status: string | null }>; diag: string }> {
-    let tabPage;
-    try {
-      tabPage = await ctx.newPage();
-    } catch {
-      return { hits: [], diag: "Tab konnte nicht geöffnet werden" };
-    }
-    await addStealthScripts(tabPage);
     const hits: Array<{ az: string; name: string; status: string | null }> = [];
     let diag = "";
-
     try {
-      // domcontentloaded statt networkidle — DPMA hat Hintergrund-Requests die nie enden
-      await tabPage.goto("https://register.dpma.de/DPMAregister/marke/basis", {
+      await page.goto("https://register.dpma.de/DPMAregister/marke/basis", {
         timeout: 40_000, waitUntil: "domcontentloaded",
       });
-      await tabPage.waitForSelector('input[name="marke"]', { timeout: 15_000 });
+      await page.waitForSelector('input[name="marke"]', { timeout: 15_000 });
 
-      // Suchfeld leeren, dann Suchterm eintragen
-      await tabPage.fill('input[name="marke"]', "");
-      await tabPage.fill('input[name="marke"]', searchTerm);
-      await tabPage.fill('input[name="klassen"]', "");
-      await tabPage.fill('input[name="klassen"]', klassen);
+      await page.fill('input[name="marke"]', "");
+      await page.fill('input[name="marke"]', searchTerm);
+      await page.fill('input[name="klassen"]', "");
+      await page.fill('input[name="klassen"]', klassen);
 
       if (nurDE) {
-        const de = tabPage.locator('input[name="demarke"]');
+        const de = page.locator('input[name="demarke"]');
         if (!(await de.isChecked())) await de.check();
-        const em = tabPage.locator('input[name="emmarke"]');
+        const em = page.locator('input[name="emmarke"]');
         if (await em.isChecked()) await em.uncheck();
-        const ir = tabPage.locator('input[name="irmarke"]');
+        const ir = page.locator('input[name="irmarke"]');
         if (await ir.isChecked()) await ir.uncheck();
       }
       if (nurInKraft) {
-        try { const c = tabPage.locator('input[name="marke_inkraft_zeigen_chk"]'); if (!(await c.isChecked())) await c.check(); } catch {}
+        try { const c = page.locator('input[name="marke_inkraft_zeigen_chk"]'); if (!(await c.isChecked())) await c.check(); } catch {}
       }
       if (zeitraumMonate > 0) {
         const von = new Date();
         von.setMonth(von.getMonth() - zeitraumMonate);
         const vonStr = `${String(von.getDate()).padStart(2, "0")}.${String(von.getMonth() + 1).padStart(2, "0")}.${von.getFullYear()}`;
-        try { await tabPage.fill('input[name="bwt_DateVonId"]', vonStr); } catch {}
+        try { await page.fill('input[name="bwt_DateVonId"]', vonStr); } catch {}
       }
-      try { await tabPage.click('input[name="radioAnsicht"][value="tabelle"]'); } catch {}
+      try { await page.click('input[name="radioAnsicht"][value="tabelle"]'); } catch {}
 
-      await tabPage.click('input[name="rechercheStarten"]');
-      // Warte auf domcontentloaded + festes Wait statt networkidle (das hängt bei Analytics-Requests)
-      await tabPage.waitForLoadState("domcontentloaded", { timeout: 30_000 });
-      await tabPage.waitForTimeout(4000);
+      await page.click('input[name="rechercheStarten"]');
+      await page.waitForLoadState("domcontentloaded", { timeout: 30_000 });
+      await page.waitForTimeout(3000);
 
-      const pageTitle = await tabPage.title().catch(() => "");
-      const pageText = (await tabPage.textContent("body").catch(() => "")) ?? "";
+      const pageTitle = await page.title().catch(() => "");
+      const pageText = (await page.textContent("body").catch(() => "")) ?? "";
       const noResults = /keine.*treffer|0 treffer|no.*result/i.test(pageText);
-      const allRows = await tabPage.$$("table tr");
+      const allRows = await page.$$("table tr");
 
-      // Paginieren
       while (true) {
-        const rows = await tabPage.$$("table tr");
+        const rows = await page.$$("table tr");
         for (const row of rows) {
           const cells = await row.$$("td");
           if (cells.length < 2) continue;
           const cellTexts: string[] = [];
           for (const cell of cells) cellTexts.push((await cell.textContent())?.trim().replace(/\s+/g, " ") ?? "");
-          // Aktenzeichen: 7–14 Ziffern (ältere DE-Marken haben 7–9 Stellen, neue 10–12)
           const azIdx = cellTexts.findIndex((t) => /^\d{7,14}$/.test(t.replace(/\s/g, "")));
           if (azIdx === -1) continue;
           const az = cellTexts[azIdx].replace(/\s/g, "");
@@ -120,20 +108,18 @@ export async function* runDpmaSearchStream(
           seenAz.add(az);
           hits.push({ az, name: cellTexts[azIdx + 1] ?? "", status: cellTexts[azIdx + 2] ?? null });
         }
-        const next = await tabPage.$('a:has-text(">>"), a:has-text("nächste"), a[title*="nächste"]');
+        const next = await page.$('a:has-text(">>"), a:has-text("nächste"), a[title*="nächste"]');
         if (!next) break;
         try {
           await next.click();
-          await tabPage.waitForLoadState("domcontentloaded", { timeout: 15_000 });
-          await tabPage.waitForTimeout(2000);
+          await page.waitForLoadState("domcontentloaded", { timeout: 15_000 });
+          await page.waitForTimeout(1500);
         } catch { break; }
       }
-
-      diag = `Seite: „${pageTitle.slice(0, 40)}" · ${allRows.length} Tabellenzeilen · ${noResults ? "Keine-Treffer-Meldung" : "Tabelle gefunden"} · ${hits.length} AZ extrahiert`;
+      diag = `„${pageTitle.slice(0, 35)}" · ${allRows.length} Zeilen · ${noResults ? "keine Treffer" : "Tabelle"} · ${hits.length} AZ`;
     } catch (e) {
-      diag = `Fehler: ${(e as Error).message.slice(0, 120)}`;
+      diag = `Fehler: ${(e as Error).message.slice(0, 100)}`;
     }
-    try { await tabPage.close(); } catch {}
     return { hits, diag };
   }
 
@@ -158,14 +144,24 @@ export async function* runDpmaSearchStream(
       const searchTerms = [s, `${s}*`, `*${s}`, ...phonetic];
       yield { type: "status", message: `Suche nach „${stem}" — ${searchTerms.length} Begriffe (exakt, Wildcards, ${phonetic.length} phonetisch)` };
 
-      // PHASE 1: Varianten sequentiell durchsuchen
+      // PHASE 1: Varianten sequentiell auf einer einzigen Tab durchsuchen
       const seenAz = new Set<string>();
       const basicHits: Array<{ az: string; name: string; status: string | null }> = [];
+
+      let searchPage: Page | undefined;
+      try {
+        searchPage = await ctx.newPage();
+        await addStealthScripts(searchPage);
+      } catch (e) {
+        yield { type: "error", message: `Suche „${stem}": Such-Tab konnte nicht geöffnet werden — ${(e as Error).message.slice(0, 150)}` };
+        errorCount++;
+        continue;
+      }
 
       for (let i = 0; i < searchTerms.length; i++) {
         const v = searchTerms[i];
         yield { type: "status", message: `[${i + 1}/${searchTerms.length}] Suche: „${v}"` };
-        const { hits, diag } = await searchVariantInTab(ctx, v, seenAz);
+        const { hits, diag } = await searchOnPage(searchPage, v, seenAz);
         basicHits.push(...hits);
         yield { type: "status", message: `[${i + 1}/${searchTerms.length}] „${v}": ${diag}` };
         if (!browser.isConnected()) {
@@ -176,6 +172,8 @@ export async function* runDpmaSearchStream(
         // Kurze Pause zwischen Anfragen um Bot-Detection zu reduzieren
         if (i < searchTerms.length - 1) await new Promise((r) => setTimeout(r, 1500));
       }
+
+      try { await searchPage.close(); } catch {}
 
       yield { type: "browser:loaded", trefferCount: basicHits.length };
       yield { type: "status", message: `${basicHits.length} Treffer aus ${searchTerms.length} Suchen. Lade Details…` };
