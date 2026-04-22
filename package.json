@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "scan:dpma": "tsx --env-file=.env.local scripts/scan-dpma.ts"
+    "scan:dpma": "tsx --env-file=.env.local scripts/scan-dpma.ts",
+    "scan:agent": "tsx --env-file=.env.local scripts/dpma-agent.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
