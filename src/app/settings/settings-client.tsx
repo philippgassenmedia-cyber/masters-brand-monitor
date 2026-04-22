@@ -1010,14 +1010,9 @@ npx tsx scripts/dpma-agent.ts
             </div>
           </div>
 
-          {/* Download */}
+          {/* Agent starten */}
           <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-5">
-            <div className="mb-1 text-sm font-semibold text-emerald-900">Agent herunterladen</div>
-            <p className="mb-4 text-xs text-stone-600">
-              Lade die Startdatei herunter und <strong>doppelklicke</strong> sie.
-              Der Agent installiert sich automatisch und wartet auf Scan-Aufträge von dieser Webseite.
-              {os === "mac" && <><br />Beim ersten Mal: Rechtsklick → &quot;Öffnen&quot; (macOS Sicherheitsabfrage).</>}
-            </p>
+            <div className="mb-1 text-sm font-semibold text-emerald-900">Agent starten</div>
 
             {configLoading && (
               <div className="flex items-center gap-2 text-xs text-stone-500">
@@ -1031,21 +1026,36 @@ npx tsx scripts/dpma-agent.ts
                 <button onClick={loadConfig} className="ml-2 font-semibold underline">Erneut versuchen</button>
               </div>
             )}
-            {config && (
-              <button
-                onClick={downloadScript}
-                className="flex items-center gap-2 rounded-full bg-stone-900 px-6 py-2.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] hover:bg-stone-800 transition"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-                {downloaded
-                  ? "Heruntergeladen!"
-                  : os === "windows"
-                    ? "DPMA-Agent-Starten.bat herunterladen"
-                    : "DPMA-Agent-Starten.command herunterladen"
-                }
-              </button>
+
+            {config && os === "windows" && (
+              <>
+                <p className="mb-4 text-xs text-stone-600">
+                  Lade die Startdatei herunter und <strong>doppelklicke</strong> sie.
+                  Der Agent installiert sich automatisch und wartet auf Scan-Aufträge.
+                </p>
+                <button
+                  onClick={downloadScript}
+                  className="flex items-center gap-2 rounded-full bg-stone-900 px-6 py-2.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] hover:bg-stone-800 transition"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  {downloaded ? "Heruntergeladen!" : "DPMA-Agent-Starten.bat herunterladen"}
+                </button>
+              </>
+            )}
+
+            {config && os === "mac" && (
+              <>
+                <p className="mb-3 text-xs text-stone-600">
+                  Öffne das <strong>Terminal</strong> (Spotlight → &quot;Terminal&quot;) und füge diesen Befehl ein.
+                  Beim ersten Mal wird alles automatisch installiert.
+                </p>
+                <CodeBlock text={`cd ~/dpma-agent 2>/dev/null || (mkdir -p ~/dpma-agent && cd ~/dpma-agent && git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . && npm install) && cd ~/dpma-agent && git pull -q && SUPABASE_URL="${config.NEXT_PUBLIC_SUPABASE_URL}" SUPABASE_SERVICE_ROLE_KEY="${config.SUPABASE_SERVICE_ROLE_KEY}" GEMINI_API_KEY="${config.GEMINI_API_KEY}" npx tsx scripts/dpma-agent.ts`} />
+                <p className="mt-2 text-[11px] text-stone-500">
+                  Terminal-Fenster offen lassen. Zum Stoppen: <kbd className="rounded border border-stone-300 bg-stone-100 px-1 py-0.5 text-[10px] font-semibold">Ctrl+C</kbd>
+                </p>
+              </>
             )}
           </div>
 
