@@ -44,36 +44,33 @@ function buildQueries(params: ScanParams): Array<{ query: string; city?: string 
     queries.push({ query: params.freeText });
   }
 
-  // Base queries — Immobilien + Unternehmensberatung
+  // Kern-Queries — Immobilien + Unternehmensberatung (beide Modi)
   queries.push({ query: `"${brand}" Immobilien Makler` });
   queries.push({ query: `"${brand}" Hausverwaltung` });
   queries.push({ query: `"${brand}" Immobilien GmbH` });
   queries.push({ query: `"${brand}" Unternehmensberatung` });
   queries.push({ query: `"${brand}" Consulting` });
+  queries.push({ query: `"${brand}" Immobilien Projektentwicklung` });
+  queries.push({ query: `"${brand}" Property Management` });
+  queries.push({ query: `"${brand}" Real Estate` });
+  queries.push({ query: `"${brand}" Bauträger` });
+  queries.push({ query: `"${brand}" Immobilien Vermietung` });
+  queries.push({ query: `"${brand}" Beratung GmbH` });
+  queries.push({ query: `"${brand}" Immobilienberatung` });
+  queries.push({ query: `"${brand}" Investment` });
 
   if (params.mode === "deep") {
-    // Immobilien erweitert
-    queries.push({ query: `"${brand}" Immobilien Projektentwicklung` });
-    queries.push({ query: `"${brand}" Property Management` });
-    queries.push({ query: `"${brand}" Real Estate` });
-    queries.push({ query: `"${brand}" Bauträger` });
-    queries.push({ query: `"${brand}" Immobilien Vermietung` });
+    // Deep: noch mehr Varianten
     queries.push({ query: `"${brand}" Immobilien Verwaltung` });
-    // Unternehmensberatung erweitert
-    queries.push({ query: `"${brand}" Beratung GmbH` });
     queries.push({ query: `"${brand}" Management Beratung` });
     queries.push({ query: `"${brand}" Business Consulting` });
-    // Überschneidungsfelder
-    queries.push({ query: `"${brand}" Immobilienberatung` });
-    queries.push({ query: `"${brand}" Investment` });
     queries.push({ query: `"${brand}" Facility Management` });
     queries.push({ query: `"${brand}" Vermögensverwaltung` });
     queries.push({ query: `"${brand}" Finanzberatung` });
   }
 
-  // City-specific queries
-  const cityLimit = params.mode === "quick" ? 5 : cities.length;
-  for (const city of cities.slice(0, cityLimit)) {
+  // Städte-Queries — alle Städte in beiden Modi
+  for (const city of cities) {
     queries.push({ query: `"${brand}" Immobilien ${city}`, city });
     queries.push({ query: `"${brand}" Beratung ${city}`, city });
     if (params.mode === "deep") {
@@ -166,8 +163,9 @@ export async function POST(req: Request) {
 
           try {
             queriesRun++;
-            // Rate-Limit Schutz: 4s zwischen Gemini Calls
-            if (i > 0) await new Promise((r) => setTimeout(r, 4000));
+            // Rate-Limit Schutz: Quick 2s, Deep 4s zwischen Gemini Calls
+            const delay = mode === "quick" ? 2000 : 4000;
+            if (i > 0) await new Promise((r) => setTimeout(r, delay));
             const results = await searchWeb(q.query, region);
             rawResults += results.length;
             send({ type: "query:done", resultCount: results.length, city: q.city });
