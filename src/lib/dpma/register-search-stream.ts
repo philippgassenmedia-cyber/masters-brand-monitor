@@ -3,6 +3,7 @@ import { matchAgainstStems } from "./matching";
 import { classifyTrademark } from "./classifier";
 import { parseDpmaDetailPage } from "./detail-parser";
 import { resolveCompanyProfile } from "../resolve-company";
+import { getTopVariants } from "./variant-generator";
 import { launchBrowser, createStealthContext, addStealthScripts } from "./browser";
 import type { DpmaKurierHit } from "./types";
 
@@ -122,8 +123,9 @@ export async function* runDpmaSearchStream(
   for (const stem of stems) {
     try {
       const s = stem.charAt(0).toUpperCase() + stem.slice(1).toLowerCase();
-      const searchTerms = [s, `${s}*`, `*${s}`];
-      yield { type: "status", message: `Suche nach „${stem}" (exakt + Wildcard-Präfix + Wildcard-Suffix)` };
+      const phonetic = getTopVariants(stem, 8).filter((v) => v.toLowerCase() !== stem.toLowerCase());
+      const searchTerms = [s, `${s}*`, `*${s}`, ...phonetic];
+      yield { type: "status", message: `Suche nach „${stem}" (exakt + Wildcards + ${phonetic.length} phonetische Varianten)` };
 
       yield { type: "status", message: "Chrome wird gestartet (kann 10-20s dauern)…" };
       const browser = await launchBrowser();
