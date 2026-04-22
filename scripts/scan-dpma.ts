@@ -13,8 +13,15 @@
  *   npx tsx scripts/scan-dpma.ts --klassen "36 37 42"
  */
 
-import { chromium } from "playwright-core";
 import { createClient } from "@supabase/supabase-js";
+
+// Dynamisch: playwright (hat Browser-Management) oder playwright-core (Fallback)
+let chromium: typeof import("playwright-core").chromium;
+try {
+  chromium = (await import("playwright")).chromium;
+} catch {
+  chromium = (await import("playwright-core")).chromium;
+}
 
 // ── Config ──────────────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -152,8 +159,10 @@ async function main() {
   console.log("🌐 Starte Chrome…");
   const browser = await chromium.launch({
     headless: true,
-    channel: isCI ? undefined : "chrome",
-    args: ["--headless=new", "--disable-blink-features=AutomationControlled", "--no-sandbox"],
+    ...(isCI
+      ? { args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"] }
+      : { channel: "chrome", args: ["--headless=new", "--disable-blink-features=AutomationControlled", "--no-sandbox"] }
+    ),
   });
 
   const ctx = await browser.newContext({
