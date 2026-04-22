@@ -123,7 +123,10 @@ export function ScanClient() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="mb-3 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-stone-900">Web Live-Scan</h1>
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-semibold text-stone-900">Web Live-Scan</h1>
+          <span className="rounded-full bg-stone-200 px-2 py-0.5 text-[10px] font-mono text-stone-500">v31c74de</span>
+        </div>
         <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">
           ← Dashboard
         </Link>
