@@ -109,8 +109,11 @@ export async function* runDpmaSearchStream(
       const pageText = (await page.textContent("body").catch(() => "")) ?? "";
       const noResults = /keine.*treffer|0 treffer|no.*result/i.test(pageText);
       const linkCount = (await page.$$('a[href*="/DPMAregister/marke/register/"]')).length;
-      logs.push(`✓ Ergebnisseite: „${pageTitle.slice(0, 40)}" · ${currentUrl.slice(-50)}`);
-      logs.push(`  → ${noResults ? "Keine Treffer" : linkCount + " Marken-Links gefunden"}`);
+      // Seiteninhalt-Snapshot für Diagnose (ersten 300 Zeichen bereinigt)
+      const bodySnippet = pageText.replace(/\s+/g, " ").trim().slice(0, 300);
+      logs.push(`✓ Ergebnisseite: „${pageTitle.slice(0, 50)}" · ${currentUrl}`);
+      logs.push(`  Inhalt: ${bodySnippet}`);
+      logs.push(`  → ${noResults ? "KEIN TREFFER (Text-Match)" : linkCount + " Marken-Links"} · ${(await page.$$("table tr")).length} Tabellenzeilen`);
 
       // Extract Aktenzeichen from detail-page links (reliable regardless of table layout)
       const collectFromPage = async () => {
