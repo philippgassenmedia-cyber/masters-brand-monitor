@@ -324,10 +324,15 @@ export function ScanClient() {
 
       {/* Map + Log + Results */}
       {isWebScan && (running || log.length > 0) && (
-        <section className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)_minmax(0,1fr)]">
+        <section className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[280px_minmax(0,1fr)_minmax(0,1fr)]">
           {/* Germany Map */}
-          <div className="glass flex items-center justify-center p-3">
-            <GermanyMap cities={SCAN_CITIES} states={cityStates} hitCount={hitCounts} />
+          <div className="glass flex min-h-0 flex-col overflow-hidden p-4">
+            <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wider text-stone-600">
+              Abdeckung
+            </h2>
+            <div className="flex min-h-0 flex-1 items-center justify-center">
+              <GermanyMap cities={SCAN_CITIES} states={cityStates} hitCount={hitCounts} />
+            </div>
           </div>
 
           {/* Log */}
