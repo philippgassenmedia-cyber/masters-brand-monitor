@@ -63,8 +63,11 @@ export async function* runDpmaSearchStream(
     let diag = "";
 
     try {
-      await tabPage.goto("https://register.dpma.de/DPMAregister/marke/basis", { timeout: 45_000 });
-      await tabPage.waitForSelector('input[name="marke"]', { timeout: 20_000 });
+      // domcontentloaded statt networkidle — DPMA hat Hintergrund-Requests die nie enden
+      await tabPage.goto("https://register.dpma.de/DPMAregister/marke/basis", {
+        timeout: 40_000, waitUntil: "domcontentloaded",
+      });
+      await tabPage.waitForSelector('input[name="marke"]', { timeout: 15_000 });
 
       // Suchfeld leeren, dann Suchterm eintragen
       await tabPage.fill('input[name="marke"]', "");
@@ -92,8 +95,9 @@ export async function* runDpmaSearchStream(
       try { await tabPage.click('input[name="radioAnsicht"][value="tabelle"]'); } catch {}
 
       await tabPage.click('input[name="rechercheStarten"]');
-      await tabPage.waitForLoadState("networkidle", { timeout: 45_000 });
-      await tabPage.waitForTimeout(3000);
+      // Warte auf domcontentloaded + festes Wait statt networkidle (das hängt bei Analytics-Requests)
+      await tabPage.waitForLoadState("domcontentloaded", { timeout: 30_000 });
+      await tabPage.waitForTimeout(4000);
 
       const pageTitle = await tabPage.title().catch(() => "");
       const pageText = (await tabPage.textContent("body").catch(() => "")) ?? "";
@@ -118,7 +122,11 @@ export async function* runDpmaSearchStream(
         }
         const next = await tabPage.$('a:has-text(">>"), a:has-text("nächste"), a[title*="nächste"]');
         if (!next) break;
-        try { await next.click(); await tabPage.waitForLoadState("networkidle", { timeout: 20_000 }); await tabPage.waitForTimeout(2000); } catch { break; }
+        try {
+          await next.click();
+          await tabPage.waitForLoadState("domcontentloaded", { timeout: 15_000 });
+          await tabPage.waitForTimeout(2000);
+        } catch { break; }
       }
 
       diag = `Seite: „${pageTitle.slice(0, 40)}" · ${allRows.length} Tabellenzeilen · ${noResults ? "Keine-Treffer-Meldung" : "Tabelle gefunden"} · ${hits.length} AZ extrahiert`;
