@@ -75,7 +75,6 @@ export async function searchWeb(
   const modelId = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
 
   const regionLabel = REGION_LABELS[region];
-  const countryCode = REGION_COUNTRY_CODES[region];
 
   const regionHint =
     region === "hessen"
@@ -98,10 +97,6 @@ Maximal 10 Ergebnisse. Keine Einleitung, nur JSON.`;
   try {
     await trackGeminiCall("gemini_search");
 
-    const dynamicRetrievalConfig = countryCode
-      ? { dynamic_retrieval_config: { mode: "MODE_DYNAMIC", dynamic_threshold: 0.3 } }
-      : {};
-
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
       {
@@ -110,7 +105,7 @@ Maximal 10 Ergebnisse. Keine Einleitung, nur JSON.`;
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: systemPrompt }] },
           contents: [{ role: "user", parts: [{ text: query }] }],
-          tools: [{ google_search: { ...dynamicRetrievalConfig } }],
+          tools: [{ google_search: {} }],
           generationConfig: { temperature: 0.1 },
         }),
         signal: ctrl.signal,
