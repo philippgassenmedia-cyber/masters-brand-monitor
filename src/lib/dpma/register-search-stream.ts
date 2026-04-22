@@ -85,17 +85,28 @@ export async function* runDpmaSearchStream(
       }
       try { await page.click('input[name="radioAnsicht"][value="tabelle"]'); } catch {}
 
-      // Submit + wait for the resulting navigation to complete
-      await Promise.all([
-        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30_000 }),
-        page.click('input[name="rechercheStarten"]'),
-      ]);
-      await page.waitForTimeout(2000);
+      // Submit + wait for navigation away from the form page
+      const preSubmitUrl = page.url();
+      await page.click('input[name="rechercheStarten"]');
+      // Wait for URL change (traditional form) OR content change (AJAX fallback)
+      try {
+        await page.waitForFunction(
+          (before: string) => window.location.href !== before,
+          preSubmitUrl,
+          { timeout: 30_000 },
+        );
+        await page.waitForLoadState("domcontentloaded", { timeout: 15_000 });
+      } catch {
+        // URL didn't change — might be AJAX or error page, wait for any content
+        await page.waitForTimeout(5000);
+      }
+      await page.waitForTimeout(1500);
 
       const currentUrl = page.url();
       const pageTitle = await page.title().catch(() => "");
       const pageText = (await page.textContent("body").catch(() => "")) ?? "";
       const noResults = /keine.*treffer|0 treffer|no.*result/i.test(pageText);
+      const linkCount = (await page.$$('a[href*="/DPMAregister/marke/register/"]')).length;
 
       // Extract Aktenzeichen from detail-page links (reliable regardless of table layout)
       const collectFromPage = async () => {
@@ -139,7 +150,7 @@ export async function* runDpmaSearchStream(
       }
 
       const rowCount = (await page.$$("table tr")).length;
-      diag = `„${pageTitle.slice(0, 35)}" · ${currentUrl.slice(-40)} · ${rowCount} Tabellenzeilen · ${noResults ? "keine Treffer" : hits.length + " AZ"}`;
+      diag = `URL: …${currentUrl.slice(-50)} · ${rowCount} Zeilen · ${linkCount} Links · ${noResults ? "KEIN TREFFER" : hits.length + " AZ gefunden"}`;
     } catch (e) {
       diag = `Fehler: ${(e as Error).message.slice(0, 120)}`;
     }
@@ -156,7 +167,7 @@ export async function* runDpmaSearchStream(
     yield { type: "done", totalFound: 0, newTrademarks: 0, updated: 0, errors: 1 };
     return;
   }
-  yield { type: "status", message: "Chrome gestartet." };
+  yield { type: "status", message: `Chrome gestartet. Verbunden: ${browser.isConnected()} · Version: ${browser.version()}` };
   const ctx = await createStealthContext(browser);
 
   for (const stem of stems) {
