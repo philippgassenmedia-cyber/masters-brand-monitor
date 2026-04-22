@@ -145,10 +145,23 @@ export async function POST(req: Request) {
       try {
         send({ type: "status", message: `Starte Scan: ${queries.length} Abfragen, Region ${region}, Modus ${mode}` });
 
+        // Inkrementell scan_runs aktualisieren — so bleiben Zwischenergebnisse erhalten
+        const flushRunStats = async (status?: string) => {
+          if (!runId) return;
+          await db.from("scan_runs").update({
+            queries_run: queriesRun,
+            raw_results: rawResults,
+            new_hits: newHits,
+            updated_hits: updatedHits,
+            ...(status ? { finished_at: new Date().toISOString(), status } : {}),
+          }).eq("id", runId);
+        };
+
         for (let i = 0; i < queries.length; i++) {
           // Check if client disconnected
           if (req.signal.aborted) {
             send({ type: "status", message: "Abgebrochen durch Client" });
+            await flushRunStats("partial");
             break;
           }
 
@@ -201,7 +214,7 @@ export async function POST(req: Request) {
                   profile,
                 });
 
-                // Insert
+                // Insert — sofort gespeichert, unabhängig vom weiteren Scan-Verlauf
                 const { data: inserted } = await db
                   .from("hits")
                   .insert({
@@ -242,25 +255,20 @@ export async function POST(req: Request) {
             errorCount++;
             if (e instanceof SearchBudgetExceededError) {
               send({ type: "error", message: e.message });
+              await flushRunStats("partial");
               break;
             }
             send({ type: "error", message: (e as Error).message?.slice(0, 200) ?? "Unbekannter Fehler" });
           }
+
+          // Stats nach jeder Query persistieren — Zwischenergebnisse überleben einen Abbruch
+          await flushRunStats();
         }
 
-        // Update scan run
+        // Abschluss
+        await flushRunStats(errorCount > 0 ? "partial" : "success");
         if (runId) {
-          await db
-            .from("scan_runs")
-            .update({
-              finished_at: new Date().toISOString(),
-              queries_run: queriesRun,
-              raw_results: rawResults,
-              new_hits: newHits,
-              updated_hits: updatedHits,
-              status: errorCount > 0 ? "partial" : "success",
-            })
-            .eq("id", runId);
+          await db.from("scan_runs").update({ finished_at: new Date().toISOString() }).eq("id", runId);
         }
 
         send({
