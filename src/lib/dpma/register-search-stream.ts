@@ -1,10 +1,11 @@
+// DPMA-Registersuche via Gemini Grounding (kein Browser nötig).
+// Sucht per Google-Suche nach DPMA-Registereinträgen und extrahiert Markeninformationen.
+
 import { getSupabaseAdminClient } from "../supabase/server";
 import { matchAgainstStems } from "./matching";
 import { classifyTrademark } from "./classifier";
-import { parseDpmaDetailPage } from "./detail-parser";
-import { resolveCompanyProfile } from "../resolve-company";
 import { getTopVariants } from "./variant-generator";
-import { searchDpmaHttp } from "./register-search-http";
+import { trackGeminiCall } from "../gemini-usage";
 import type { DpmaKurierHit } from "./types";
 
 export type DpmaEvent =
@@ -26,123 +27,212 @@ export interface DpmaSearchOptions {
   zeitraumMonate?: number;
 }
 
-const DETAIL_HEADERS: Record<string, string> = {
-  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-  "Accept-Language": "de-DE,de;q=0.9,en;q=0.5",
-};
+interface GeminiTrademarkHit {
+  aktenzeichen: string;
+  markenname: string;
+  inhaber: string | null;
+  status: string | null;
+  nizza_klassen: number[];
+  register_url: string | null;
+}
 
-async function fetchDetailPage(az: string): Promise<string> {
-  const url = `https://register.dpma.de/DPMAregister/marke/register/${az}/DE`;
-  const res = await fetch(url, {
-    headers: DETAIL_HEADERS,
-    signal: AbortSignal.timeout(20_000),
-  });
-  const html = await res.text();
-  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+/**
+ * Sucht per Gemini Grounding nach DPMA-Registereinträgen.
+ * Jeder Suchbegriff wird als Google-Suche mit site:register.dpma.de ausgeführt.
+ */
+async function searchDpmaViaGemini(
+  searchTerm: string,
+  klassen: string,
+): Promise<GeminiTrademarkHit[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY missing");
+  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+
+  const query = `site:register.dpma.de "${searchTerm}" Marke Nizza-Klasse ${klassen}`;
+
+  const systemPrompt = `Du durchsuchst das Deutsche Patent- und Markenamt (DPMA) Register nach Markenanmeldungen.
+Extrahiere ALLE gefundenen Marken aus den Suchergebnissen.
+
+Für jede Marke gib zurück:
+- aktenzeichen: Die DPMA-Registernummer (z.B. "302024001234")
+- markenname: Der Name der Marke
+- inhaber: Der Inhaber/Anmelder (falls sichtbar)
+- status: Status der Marke (z.B. "Eingetragen", "Angemeldet")
+- nizza_klassen: Array der Nizza-Klassen als Zahlen
+- register_url: URL zur DPMA-Registerseite
+
+Antworte NUR mit einem JSON-Array. Keine Einleitung, nur JSON.
+Falls keine Treffer: leeres Array [].`;
+
+  await trackGeminiCall("gemini_dpma");
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: query }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { temperature: 0.1 },
+      }),
+    },
+  );
+
+  if (!res.ok) throw new Error(`Gemini ${res.status} ${res.statusText}`);
+
+  const data = await res.json();
+
+  // Grounding-Chunks auswerten — URLs mit register.dpma.de extrahieren
+  const groundingChunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+  const dpmaUrls: string[] = groundingChunks
+    .filter((c: { web?: { uri: string } }) => c.web?.uri?.includes("register.dpma.de"))
+    .map((c: { web: { uri: string } }) => c.web.uri);
+
+  // Aktenzeichen aus URLs extrahieren (Format: /marke/register/XXXXXXXX/DE)
+  const azFromUrls = new Set<string>();
+  for (const url of dpmaUrls) {
+    const m = url.match(/register\/(\d{9,15})\//);
+    if (m) azFromUrls.add(m[1]);
+  }
+
+  // Gemini-Text-Antwort parsen
+  const text = data.candidates?.[0]?.content?.parts
+    ?.map((p: { text?: string }) => p.text ?? "")
+    .join("") ?? "";
+
+  const hits: GeminiTrademarkHit[] = [];
+
+  // Versuche JSON zu parsen
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]) as GeminiTrademarkHit[];
+      for (const h of parsed) {
+        if (h.aktenzeichen || h.markenname) {
+          hits.push({
+            aktenzeichen: String(h.aktenzeichen ?? "").replace(/\s/g, ""),
+            markenname: h.markenname ?? "",
+            inhaber: h.inhaber ?? null,
+            status: h.status ?? null,
+            nizza_klassen: Array.isArray(h.nizza_klassen) ? h.nizza_klassen.map(Number).filter(n => n > 0) : [],
+            register_url: h.register_url ?? null,
+          });
+        }
+      }
+    } catch {
+      // JSON parse failed, extract from text
+    }
+  }
+
+  // Zusätzlich: Aktenzeichen aus Grounding-URLs hinzufügen die nicht in der JSON-Antwort sind
+  for (const az of azFromUrls) {
+    if (!hits.some(h => h.aktenzeichen === az)) {
+      hits.push({
+        aktenzeichen: az,
+        markenname: `[${az}]`,
+        inhaber: null,
+        status: null,
+        nizza_klassen: [],
+        register_url: `https://register.dpma.de/DPMAregister/marke/register/${az}/DE`,
+      });
+    }
+  }
+
+  // Auch Aktenzeichen aus dem Text extrahieren (Fallback)
+  const azMatches = text.matchAll(/\b(\d{9,15})\b/g);
+  for (const m of azMatches) {
+    const az = m[1];
+    if (!hits.some(h => h.aktenzeichen === az)) {
+      hits.push({
+        aktenzeichen: az,
+        markenname: `[${az}]`,
+        inhaber: null,
+        status: null,
+        nizza_klassen: [],
+        register_url: `https://register.dpma.de/DPMAregister/marke/register/${az}/DE`,
+      });
+    }
+  }
+
+  return hits;
 }
 
 export async function* runDpmaSearchStream(
   stems: string[],
   opts: DpmaSearchOptions = {},
 ): AsyncGenerator<DpmaEvent> {
-  const nurDE = opts.nurDE !== false;
-  const nurInKraft = opts.nurInKraft !== false;
   const klassen = opts.klassen ?? "36 37 42";
-  const zeitraumMonate = opts.zeitraumMonate ?? 0;
   const db = getSupabaseAdminClient();
   let totalFound = 0;
   let newTrademarks = 0;
   let updated = 0;
   let errorCount = 0;
 
-  // PHASE 1: HTTP-Scraping (kein Browser nötig)
   yield { type: "browser:start" };
-  yield { type: "status", message: "Starte DPMA-Suche via HTTP…" };
+  yield { type: "status", message: "Starte DPMA-Registersuche via Gemini…" };
 
   const allHits: DpmaKurierHit[] = [];
+  const seenAz = new Set<string>();
 
   for (const stem of stems) {
     try {
-      const s = stem.charAt(0).toUpperCase() + stem.slice(1).toLowerCase();
-      const phonetic = getTopVariants(stem, 3).filter((v) => v.toLowerCase() !== stem.toLowerCase()).slice(0, 3);
-      const searchTerms = [s, `${s}*`, `*${s}`, ...phonetic];
-      yield { type: "status", message: `Suche nach „${stem}" — ${searchTerms.length} Begriffe (exakt, Wildcards, ${phonetic.length} phonetisch)` };
+      const variants = getTopVariants(stem, 6);
+      yield { type: "status", message: `Suche nach „${stem}" + ${variants.length - 1} Varianten` };
 
-      const seenAz = new Set<string>();
-      const basicHits: Array<{ az: string; name: string; status: string | null }> = [];
+      for (let i = 0; i < variants.length; i++) {
+        const variant = variants[i];
+        yield { type: "status", message: `[${i + 1}/${variants.length}] Suche „${variant}" im DPMA-Register…` };
 
-      for (let i = 0; i < searchTerms.length; i++) {
-        const v = searchTerms[i];
-        yield { type: "status", message: `[${i + 1}/${searchTerms.length}] Suche: „${v}"` };
-        const log: string[] = [];
-        const { hits, diag } = await searchDpmaHttp(v, { nurDE, nurInKraft, klassen, zeitraumMonate }, seenAz, log);
-        for (const msg of log) yield { type: "status", message: msg };
-        basicHits.push(...hits);
-        yield { type: "status", message: `[${i + 1}/${searchTerms.length}] „${v}": ${diag}` };
-        if (i < searchTerms.length - 1) await new Promise((r) => setTimeout(r, 1000));
-      }
-
-      yield { type: "browser:loaded", trefferCount: basicHits.length };
-      yield { type: "status", message: `${basicHits.length} Treffer aus ${searchTerms.length} Suchen. Lade Details…` };
-
-      if (basicHits.length === 0) continue;
-
-      // PHASE 2: Detail-Seiten via HTTP laden
-      for (let i = 0; i < basicHits.length; i++) {
-        const bh = basicHits[i];
         try {
-          const rawText = await fetchDetailPage(bh.az);
-          const detail = parseDpmaDetailPage(rawText);
+          // 2s Pause zwischen Gemini-Calls
+          if (i > 0) await new Promise(r => setTimeout(r, 2000));
 
-          yield { type: "status", message: `[${i + 1}/${basicHits.length}] ${bh.name || bh.az} — ${detail.inhaber?.slice(0, 40) ?? "—"}` };
+          const results = await searchDpmaViaGemini(variant, klassen);
 
-          allHits.push({
-            aktenzeichen: bh.az, markenname: bh.name || `[${bh.az}]`,
-            anmelder: detail.inhaber, anmeldetag: detail.anmeldetag ?? detail.eintragungstag,
-            veroeffentlichungstag: detail.veroeffentlichungstag,
-            status: detail.aktenzustand ?? bh.status, nizza_klassen: detail.klassen,
-            waren_dienstleistungen: detail.warenDienstleistungen,
-            inhaber_anschrift: detail.inhaberAnschrift, vertreter: detail.vertreter,
-            markenform: detail.markenform, schutzdauer_bis: detail.schutzendedatum,
-          });
-        } catch {
-          yield { type: "status", message: `[${i + 1}/${basicHits.length}] ${bh.az} — Detail nicht ladbar` };
-          allHits.push({
-            aktenzeichen: bh.az, markenname: bh.name || `[${bh.az}]`,
-            anmelder: null, anmeldetag: null, veroeffentlichungstag: null,
-            status: bh.status, nizza_klassen: [], waren_dienstleistungen: null,
-            inhaber_anschrift: null, vertreter: null, markenform: null, schutzdauer_bis: null,
-          });
+          for (const r of results) {
+            if (!r.aktenzeichen || seenAz.has(r.aktenzeichen)) continue;
+            seenAz.add(r.aktenzeichen);
+
+            allHits.push({
+              aktenzeichen: r.aktenzeichen,
+              markenname: r.markenname || `[${r.aktenzeichen}]`,
+              anmelder: r.inhaber,
+              anmeldetag: null,
+              veroeffentlichungstag: null,
+              status: r.status,
+              nizza_klassen: r.nizza_klassen,
+              waren_dienstleistungen: null,
+              inhaber_anschrift: null,
+              vertreter: null,
+              markenform: null,
+              schutzdauer_bis: null,
+            });
+          }
+
+          yield { type: "status", message: `„${variant}": ${results.length} Treffer (${allHits.length} gesamt)` };
+        } catch (e) {
+          errorCount++;
+          yield { type: "error", message: `Suche „${variant}": ${(e as Error).message.slice(0, 150)}` };
         }
-        if (i < basicHits.length - 1) await new Promise((r) => setTimeout(r, 500));
       }
-
-      yield { type: "status", message: `${stem}: ${allHits.length} Treffer gesamt.` };
     } catch (e) {
       errorCount++;
-      yield { type: "error", message: `Suche „${stem}": ${(e as Error).message.slice(0, 200)}` };
+      yield { type: "error", message: `Stamm „${stem}": ${(e as Error).message.slice(0, 200)}` };
     }
   }
 
-  yield { type: "status", message: "HTTP-Suche abgeschlossen." };
+  totalFound = allHits.length;
+  yield { type: "browser:loaded", trefferCount: totalFound };
+  yield { type: "browser:done", hitCount: totalFound };
 
-  // Deduplizieren
-  const seen = new Set<string>();
-  const uniqueHits = allHits.filter((h) => {
-    if (seen.has(h.aktenzeichen)) return false;
-    seen.add(h.aktenzeichen);
-    return true;
-  });
-  totalFound = uniqueHits.length;
-  yield { type: "browser:done", hitCount: uniqueHits.length };
+  // Phase 2: Analyse + Speicherung
+  yield { type: "status", message: `Analysiere ${totalFound} Treffer…` };
 
-  // PHASE 2: Analyse
-  yield { type: "status", message: `Starte Analyse von ${uniqueHits.length} Treffern…` };
-
-  for (let i = 0; i < uniqueHits.length; i++) {
-    const hit = uniqueHits[i];
-    yield { type: "analyze:start", index: i + 1, total: uniqueHits.length, markenname: hit.markenname };
+  for (let i = 0; i < allHits.length; i++) {
+    const hit = allHits[i];
+    yield { type: "analyze:start", index: i + 1, total: allHits.length, markenname: hit.markenname };
 
     try {
       const match = matchAgainstStems(hit.markenname, stems);
@@ -161,32 +251,9 @@ export async function* runDpmaSearchStream(
         continue;
       }
 
+      // 2s Pause vor Gemini-Klassifizierung
+      await new Promise(r => setTimeout(r, 2000));
       const classification = await classifyTrademark(hit, match);
-
-      const fristEnde = hit.schutzdauer_bis ?? (hit.veroeffentlichungstag
-        ? (() => { const d = new Date(hit.veroeffentlichungstag); if (isNaN(d.getTime())) return null; d.setMonth(d.getMonth() + 3); return d.toISOString().slice(0, 10); })()
-        : null);
-
-      // Website automatisch suchen bei relevantem Treffer
-      let resolvedWebsite: string | null = null;
-      const shouldLookupWebsite =
-        classification.score >= 5 || match.type === "exact" || match.type === "compound";
-
-      if (shouldLookupWebsite) {
-        try {
-          const searchName = hit.markenname + (hit.anmelder ? ` ${hit.anmelder}` : "");
-          yield { type: "status", message: `Website suchen: ${searchName.slice(0, 50)}…` };
-          const { resolvedUrl, profile: webProfile } = await resolveCompanyProfile(searchName);
-          resolvedWebsite = resolvedUrl;
-
-          // Falls Impressum-Daten gefunden, Anmelder updaten
-          if (webProfile?.company_name && !hit.anmelder) {
-            hit.anmelder = webProfile.company_name;
-          }
-        } catch {
-          // Website-Suche ist optional — Fehler ignorieren
-        }
-      }
 
       const { data: inserted } = await db.from("trademarks").insert({
         aktenzeichen: hit.aktenzeichen,
@@ -194,7 +261,6 @@ export async function* runDpmaSearchStream(
         anmelder: hit.anmelder,
         anmeldetag: hit.anmeldetag,
         veroeffentlichungstag: hit.veroeffentlichungstag,
-        widerspruchsfrist_ende: fristEnde,
         status: hit.status,
         nizza_klassen: hit.nizza_klassen,
         waren_dienstleistungen: hit.waren_dienstleistungen,
@@ -210,10 +276,10 @@ export async function* runDpmaSearchStream(
         branchenbezug: classification.branchenbezug,
         prioritaet: classification.prioritaet,
         begruendung: classification.begruendung,
-        resolved_website: resolvedWebsite,
       }).select("id").single();
+
       newTrademarks++;
-      yield { type: "hit:new", id: inserted?.id ?? "", aktenzeichen: hit.aktenzeichen, markenname: hit.markenname, score: classification.score, website: resolvedWebsite };
+      yield { type: "hit:new", id: inserted?.id ?? "", aktenzeichen: hit.aktenzeichen, markenname: hit.markenname, score: classification.score, website: null };
       yield { type: "analyze:done", markenname: hit.markenname, score: classification.score, matchType: match.type };
     } catch (e) {
       const msg = (e as Error).message;

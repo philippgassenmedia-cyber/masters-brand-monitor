@@ -1,12 +1,10 @@
-// Nicht-streamende DPMA-Registersuche (Fallback).
-// Nutzt Playwright chromium mit headless=new Modus für register.dpma.de.
+// Nicht-streamende DPMA-Registersuche via Gemini Grounding (Fallback).
+// Wird vom scheduled-runner und vom cron genutzt.
 
 import { getSupabaseAdminClient } from "../supabase/server";
 import { matchAgainstStems } from "./matching";
 import { classifyTrademark } from "./classifier";
-import { parseDpmaDetailPage } from "./detail-parser";
-import { resolveCompanyProfile } from "../resolve-company";
-import { launchBrowser, createStealthContext, addStealthScripts } from "./browser";
+import { trackGeminiCall } from "../gemini-usage";
 import type { DpmaKurierHit } from "./types";
 
 export interface DpmaSearchResult {
@@ -16,247 +14,156 @@ export interface DpmaSearchResult {
   errors: string[];
 }
 
+async function searchDpmaViaGemini(
+  searchTerm: string,
+  klassen: string,
+): Promise<Array<{ aktenzeichen: string; markenname: string; inhaber: string | null; status: string | null; nizza_klassen: number[] }>> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY missing");
+  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+
+  const query = `site:register.dpma.de "${searchTerm}" Marke Nizza-Klasse ${klassen}`;
+
+  const systemPrompt = `Du durchsuchst das DPMA-Register nach Markenanmeldungen.
+Extrahiere ALLE gefundenen Marken. Für jede: aktenzeichen, markenname, inhaber, status, nizza_klassen (als Zahlen-Array).
+Antworte NUR mit JSON-Array. Falls keine Treffer: [].`;
+
+  await trackGeminiCall("gemini_dpma");
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: query }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { temperature: 0.1 },
+      }),
+    },
+  );
+
+  if (!res.ok) throw new Error(`Gemini ${res.status}`);
+  const data = await res.json();
+
+  // Grounding URLs
+  const groundingChunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+  const azFromUrls = new Set<string>();
+  for (const c of groundingChunks) {
+    const url = c.web?.uri ?? "";
+    const m = url.match(/register\/(\d{9,15})\//);
+    if (m) azFromUrls.add(m[1]);
+  }
+
+  const text = data.candidates?.[0]?.content?.parts
+    ?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
+
+  const hits: Array<{ aktenzeichen: string; markenname: string; inhaber: string | null; status: string | null; nizza_klassen: number[] }> = [];
+
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      for (const h of parsed) {
+        if (h.aktenzeichen || h.markenname) {
+          hits.push({
+            aktenzeichen: String(h.aktenzeichen ?? "").replace(/\s/g, ""),
+            markenname: h.markenname ?? "",
+            inhaber: h.inhaber ?? null,
+            status: h.status ?? null,
+            nizza_klassen: Array.isArray(h.nizza_klassen) ? h.nizza_klassen.map(Number).filter((n: number) => n > 0) : [],
+          });
+        }
+      }
+    } catch {}
+  }
+
+  for (const az of azFromUrls) {
+    if (!hits.some(h => h.aktenzeichen === az)) {
+      hits.push({ aktenzeichen: az, markenname: `[${az}]`, inhaber: null, status: null, nizza_klassen: [] });
+    }
+  }
+
+  return hits;
+}
+
 export async function searchDpmaRegister(
   stems: string[],
   nizzaKlassen = "36 37 42",
 ): Promise<DpmaSearchResult> {
   const db = getSupabaseAdminClient();
-  const result: DpmaSearchResult = {
-    totalFound: 0,
-    newTrademarks: 0,
-    updated: 0,
-    errors: [],
-  };
+  const result: DpmaSearchResult = { totalFound: 0, newTrademarks: 0, updated: 0, errors: [] };
+  const seenAz = new Set<string>();
+  const allHits: DpmaKurierHit[] = [];
 
-  const browser = await launchBrowser();
-
-  try {
-    const ctx = await createStealthContext(browser);
-
-    const allHits: DpmaKurierHit[] = [];
-    const seenAz = new Set<string>();
-
-    for (const stem of stems) {
+  for (const stem of stems) {
+    const variants = [stem, ...stems.filter(s => s !== stem)].slice(0, 4);
+    for (const variant of variants) {
       try {
-        const page = await ctx.newPage();
-        await addStealthScripts(page);
-
-        await page.goto("https://register.dpma.de/DPMAregister/marke/basis", {
-          timeout: 45_000,
-        });
-        await page.waitForSelector('input[name="marke"]', { timeout: 20_000 });
-
-        await page.fill('input[name="marke"]', stem);
-        await page.fill('input[name="klassen"]', nizzaKlassen);
-
-        // Nur deutsche Marken
-        const de = page.locator('input[name="demarke"]');
-        if (!(await de.isChecked())) await de.check();
-        const em = page.locator('input[name="emmarke"]');
-        if (await em.isChecked()) await em.uncheck();
-        const ir = page.locator('input[name="irmarke"]');
-        if (await ir.isChecked()) await ir.uncheck();
-
-        // Nur in Kraft befindliche Marken
-        try {
-          const c = page.locator('input[name="marke_inkraft_zeigen_chk"]');
-          if (!(await c.isChecked())) await c.check();
-        } catch {}
-
-        // Zeitraum: letzte 3 Monate
-        const von = new Date();
-        von.setMonth(von.getMonth() - 3);
-        const vonStr = `${String(von.getDate()).padStart(2, "0")}.${String(von.getMonth() + 1).padStart(2, "0")}.${von.getFullYear()}`;
-        try {
-          await page.fill('input[name="bwt_DateVonId"]', vonStr);
-        } catch {}
-
-        // Tabellenansicht
-        try {
-          await page.click('input[name="radioAnsicht"][value="tabelle"]');
-        } catch {}
-
-        await page.click('input[name="rechercheStarten"]');
-        await page.waitForLoadState("networkidle", { timeout: 45_000 });
-        await page.waitForTimeout(3000);
-
-        // Ergebnisse aus Tabelle extrahieren
-        while (true) {
-          const rows = await page.$$("table tr");
-          for (const row of rows) {
-            const cells = await row.$$("td");
-            if (cells.length < 4) continue;
-            const cellTexts: string[] = [];
-            for (const cell of cells) {
-              cellTexts.push(
-                (await cell.textContent())?.trim().replace(/\s+/g, " ") ?? "",
-              );
-            }
-            const az = cellTexts[3]?.replace(/\s/g, "") ?? "";
-            if (!az || !/^\d+$/.test(az) || seenAz.has(az)) continue;
-            seenAz.add(az);
-
-            allHits.push({
-              aktenzeichen: az,
-              markenname: cellTexts[4] ?? `[${az}]`,
-              anmelder: null,
-              anmeldetag: null,
-              veroeffentlichungstag: null,
-              status: cellTexts[5] ?? null,
-              nizza_klassen: [],
-              waren_dienstleistungen: null,
-              inhaber_anschrift: null,
-              vertreter: null,
-              markenform: null,
-              schutzdauer_bis: null,
-            });
-          }
-
-          const next = await page.$(
-            'a:has-text(">>"), a:has-text("nächste"), a[title*="nächste"]',
-          );
-          if (!next) break;
-          try {
-            await next.click();
-            await page.waitForLoadState("networkidle", { timeout: 20_000 });
-            await page.waitForTimeout(2000);
-          } catch {
-            break;
-          }
+        if (seenAz.size > 0) await new Promise(r => setTimeout(r, 2000));
+        const hits = await searchDpmaViaGemini(variant, nizzaKlassen);
+        for (const h of hits) {
+          if (!h.aktenzeichen || seenAz.has(h.aktenzeichen)) continue;
+          seenAz.add(h.aktenzeichen);
+          allHits.push({
+            aktenzeichen: h.aktenzeichen,
+            markenname: h.markenname,
+            anmelder: h.inhaber,
+            anmeldetag: null, veroeffentlichungstag: null,
+            status: h.status,
+            nizza_klassen: h.nizza_klassen,
+            waren_dienstleistungen: null, inhaber_anschrift: null,
+            vertreter: null, markenform: null, schutzdauer_bis: null,
+          });
         }
-
-        // Detail-Seiten laden
-        for (let i = 0; i < allHits.length; i++) {
-          const hit = allHits[i];
-          if (hit.anmelder !== null) continue; // Bereits mit Details gefüllt
-          try {
-            await page.goto(
-              `https://register.dpma.de/DPMAregister/marke/register/${hit.aktenzeichen}/DE`,
-              { timeout: 20_000 },
-            );
-            await page.waitForTimeout(2500);
-            const rawText = (await page.textContent("body")) ?? "";
-            const detail = parseDpmaDetailPage(rawText);
-
-            hit.anmelder = detail.inhaber;
-            hit.anmeldetag = detail.anmeldetag ?? detail.eintragungstag;
-            hit.veroeffentlichungstag = detail.veroeffentlichungstag;
-            hit.status = detail.aktenzustand ?? hit.status;
-            hit.nizza_klassen = detail.klassen;
-            hit.waren_dienstleistungen = detail.warenDienstleistungen;
-            hit.inhaber_anschrift = detail.inhaberAnschrift;
-            hit.vertreter = detail.vertreter;
-            hit.markenform = detail.markenform;
-            hit.schutzdauer_bis = detail.schutzendedatum;
-          } catch {
-            // Detail nicht ladbar — Basis-Daten reichen
-          }
-        }
-
-        await page.close();
       } catch (e) {
-        result.errors.push(`Suche "${stem}": ${(e as Error).message.slice(0, 200)}`);
+        result.errors.push(`${variant}: ${(e as Error).message.slice(0, 150)}`);
       }
     }
+  }
 
-    await browser.close();
+  result.totalFound = allHits.length;
 
-    // Deduplizieren
-    const seen = new Set<string>();
-    const uniqueHits = allHits.filter((h) => {
-      if (seen.has(h.aktenzeichen)) return false;
-      seen.add(h.aktenzeichen);
-      return true;
-    });
-    result.totalFound = uniqueHits.length;
-
-    // Analyse und Speicherung
-    for (const hit of uniqueHits) {
-      try {
-        const match = matchAgainstStems(hit.markenname, stems);
-
-        const { data: existing } = await db
-          .from("trademarks")
-          .select("id")
-          .eq("aktenzeichen", hit.aktenzeichen)
-          .eq("markenstamm", match.stem)
-          .maybeSingle();
-
-        if (existing) {
-          await db
-            .from("trademarks")
-            .update({ last_seen_at: new Date().toISOString() })
-            .eq("id", existing.id);
-          result.updated++;
-          continue;
-        }
-
-        const classification = await classifyTrademark(hit, match);
-
-        const fristEnde = hit.schutzdauer_bis ??
-          (hit.veroeffentlichungstag
-            ? (() => {
-                const d = new Date(hit.veroeffentlichungstag);
-                if (isNaN(d.getTime())) return null;
-                d.setMonth(d.getMonth() + 3);
-                return d.toISOString().slice(0, 10);
-              })()
-            : null);
-
-        // Website automatisch suchen bei relevantem Treffer
-        let resolvedWebsite: string | null = null;
-        if (
-          classification.score >= 5 ||
-          match.type === "exact" ||
-          match.type === "compound"
-        ) {
-          try {
-            const searchName =
-              hit.markenname + (hit.anmelder ? ` ${hit.anmelder}` : "");
-            const { resolvedUrl } = await resolveCompanyProfile(searchName);
-            resolvedWebsite = resolvedUrl;
-          } catch {
-            // Website-Suche ist optional
-          }
-        }
-
-        await db.from("trademarks").insert({
-          aktenzeichen: hit.aktenzeichen,
-          markenname: hit.markenname,
-          anmelder: hit.anmelder,
-          anmeldetag: hit.anmeldetag,
-          veroeffentlichungstag: hit.veroeffentlichungstag,
-          widerspruchsfrist_ende: fristEnde,
-          status: hit.status,
-          nizza_klassen: hit.nizza_klassen,
-          waren_dienstleistungen: hit.waren_dienstleistungen,
-          inhaber_anschrift: hit.inhaber_anschrift,
-          vertreter: hit.vertreter,
-          markenform: hit.markenform,
-          schutzdauer_bis: hit.schutzdauer_bis,
-          quelle: "dpma_register",
-          match_type: match.type,
-          markenstamm: match.stem,
-          register_url: `https://register.dpma.de/DPMAregister/marke/register/${hit.aktenzeichen}/DE`,
-          relevance_score: classification.score,
-          branchenbezug: classification.branchenbezug,
-          prioritaet: classification.prioritaet,
-          begruendung: classification.begruendung,
-          resolved_website: resolvedWebsite,
-        });
-        result.newTrademarks++;
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (!msg.includes("duplicate") && !msg.includes("unique")) {
-          result.errors.push(`${hit.aktenzeichen}: ${msg.slice(0, 150)}`);
-        }
-      }
-    }
-  } catch (e) {
+  for (const hit of allHits) {
     try {
-      await browser.close();
-    } catch {}
-    throw e;
+      const match = matchAgainstStems(hit.markenname, stems);
+      const { data: existing } = await db
+        .from("trademarks").select("id")
+        .eq("aktenzeichen", hit.aktenzeichen).eq("markenstamm", match.stem)
+        .maybeSingle();
+
+      if (existing) {
+        await db.from("trademarks").update({ last_seen_at: new Date().toISOString() }).eq("id", existing.id);
+        result.updated++;
+        continue;
+      }
+
+      await new Promise(r => setTimeout(r, 2000));
+      const classification = await classifyTrademark(hit, match);
+
+      await db.from("trademarks").insert({
+        aktenzeichen: hit.aktenzeichen,
+        markenname: hit.markenname,
+        anmelder: hit.anmelder,
+        status: hit.status,
+        nizza_klassen: hit.nizza_klassen,
+        quelle: "dpma_register",
+        match_type: match.type,
+        markenstamm: match.stem,
+        register_url: `https://register.dpma.de/DPMAregister/marke/register/${hit.aktenzeichen}/DE`,
+        relevance_score: classification.score,
+        branchenbezug: classification.branchenbezug,
+        prioritaet: classification.prioritaet,
+        begruendung: classification.begruendung,
+      });
+      result.newTrademarks++;
+    } catch (e) {
+      const msg = (e as Error).message;
+      if (!msg.includes("duplicate") && !msg.includes("unique")) {
+        result.errors.push(`${hit.aktenzeichen}: ${msg.slice(0, 150)}`);
+      }
+    }
   }
 
   return result;
