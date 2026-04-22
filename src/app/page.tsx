@@ -189,7 +189,7 @@ export default async function DashboardPage({
 
       {/* Scan-Control */}
       <section className="mt-6">
-        <div className="glass flex flex-wrap items-center justify-between gap-4 p-5">
+        <div className="glass flex flex-wrap items-center justify-between gap-4 p-3 md:p-5">
           <div>
             <h2 className="text-sm font-semibold text-stone-900">Neue Suche starten</h2>
             <p className="mt-1 text-xs text-stone-600">
@@ -265,7 +265,26 @@ export default async function DashboardPage({
               Alle anzeigen →
             </Link>
           </div>
-          <div className="overflow-x-auto">
+          {/* Mobile: card list · Desktop: table */}
+          <div className="md:hidden">
+            {(dpmaRes.data ?? []).map((t) => {
+              const days = t.widerspruchsfrist_ende
+                ? Math.ceil((new Date(t.widerspruchsfrist_ende).getTime() - Date.now()) / 86_400_000)
+                : null;
+              return (
+                <Link key={t.id} href={`/trademarks/${t.id}`} className="flex items-center gap-3 border-t border-white/50 px-4 py-3 transition hover:bg-white/50">
+                  <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${(t.relevance_score ?? 0) >= 7 ? "bg-rose-100/80 text-rose-900" : (t.relevance_score ?? 0) >= 4 ? "bg-amber-100/80 text-amber-900" : "bg-stone-200/70 text-stone-700"}`}>
+                    {t.relevance_score ?? "—"}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-stone-900">{t.markenname}</div>
+                    <div className="text-[11px] text-stone-500">{t.aktenzeichen} · {days !== null ? (days < 0 ? "Abgelaufen" : `${days}d`) : "—"}</div>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="text-left text-[10px] uppercase tracking-wider text-stone-500">
                 <tr>
@@ -283,63 +302,11 @@ export default async function DashboardPage({
                     : null;
                   return (
                     <tr key={t.id} className="border-t border-white/50 transition hover:bg-white/50">
-                      <td className="px-5 py-3">
-                        <span
-                          className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold ${
-                            (t.relevance_score ?? 0) >= 7
-                              ? "bg-rose-100/80 text-rose-900"
-                              : (t.relevance_score ?? 0) >= 4
-                                ? "bg-amber-100/80 text-amber-900"
-                                : "bg-stone-200/70 text-stone-700"
-                          }`}
-                        >
-                          {t.relevance_score ?? "—"}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">
-                        <Link
-                          href={`/trademarks/${t.id}`}
-                          className="font-semibold text-stone-900 hover:text-stone-600"
-                        >
-                          {t.markenname}
-                        </Link>
-                        <div className="text-[11px] text-stone-500">{t.aktenzeichen}</div>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-stone-700 ring-1 ring-white capitalize">
-                          {t.match_type}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">
-                        {t.prioritaet ? (
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${
-                              t.prioritaet === "critical"
-                                ? "bg-rose-100 text-rose-900"
-                                : t.prioritaet === "high"
-                                  ? "bg-amber-100 text-amber-900"
-                                  : "bg-stone-100 text-stone-600"
-                            }`}
-                          >
-                            {t.prioritaet}
-                          </span>
-                        ) : (
-                          <span className="text-stone-400">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={`text-xs ${
-                            days !== null && days <= 7
-                              ? "font-bold text-rose-700"
-                              : days !== null && days <= 30
-                                ? "font-semibold text-amber-700"
-                                : "text-stone-500"
-                          }`}
-                        >
-                          {days !== null ? (days < 0 ? "Abgelaufen" : `${days}d`) : "—"}
-                        </span>
-                      </td>
+                      <td className="px-5 py-3"><span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold ${(t.relevance_score ?? 0) >= 7 ? "bg-rose-100/80 text-rose-900" : (t.relevance_score ?? 0) >= 4 ? "bg-amber-100/80 text-amber-900" : "bg-stone-200/70 text-stone-700"}`}>{t.relevance_score ?? "—"}</span></td>
+                      <td className="px-5 py-3"><Link href={`/trademarks/${t.id}`} className="font-semibold text-stone-900 hover:text-stone-600">{t.markenname}</Link><div className="text-[11px] text-stone-500">{t.aktenzeichen}</div></td>
+                      <td className="px-5 py-3"><span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-stone-700 ring-1 ring-white capitalize">{t.match_type}</span></td>
+                      <td className="px-5 py-3">{t.prioritaet ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${t.prioritaet === "critical" ? "bg-rose-100 text-rose-900" : t.prioritaet === "high" ? "bg-amber-100 text-amber-900" : "bg-stone-100 text-stone-600"}`}>{t.prioritaet}</span> : <span className="text-stone-400">—</span>}</td>
+                      <td className="px-5 py-3"><span className={`text-xs ${days !== null && days <= 7 ? "font-bold text-rose-700" : days !== null && days <= 30 ? "font-semibold text-amber-700" : "text-stone-500"}`}>{days !== null ? (days < 0 ? "Abgelaufen" : `${days}d`) : "—"}</span></td>
                     </tr>
                   );
                 })}
@@ -366,7 +333,21 @@ export default async function DashboardPage({
             <span className="text-[10px] uppercase tracking-wider text-slate-500">Neue Hits</span>
           </div>
         </div>
-        <div className="overflow-x-auto">
+        {/* Mobile: card list */}
+        <div className="md:hidden">
+          {runs.length === 0 && <p className="px-4 py-8 text-center text-xs text-slate-500">Noch kein Scan gelaufen.</p>}
+          {runs.map((r) => (
+            <div key={r.id} className="flex items-center justify-between border-t border-white/50 px-4 py-3">
+              <div>
+                <div className="text-xs font-semibold text-slate-800">{new Date(r.started_at).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</div>
+                <div className="text-[11px] text-slate-500">{r.region ?? "—"} · {r.new_hits} neu · {r.raw_results} roh</div>
+              </div>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${r.status === "success" ? "bg-emerald-100/80 text-emerald-800" : r.status === "partial" ? "bg-amber-100/80 text-amber-800" : r.status === "failed" ? "bg-red-100/80 text-red-800" : "bg-slate-100/80 text-slate-700"}`}>{r.status}</span>
+            </div>
+          ))}
+        </div>
+        {/* Desktop: full table */}
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full text-sm">
             <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
               <tr>
@@ -380,40 +361,16 @@ export default async function DashboardPage({
               </tr>
             </thead>
             <tbody>
-              {runs.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-5 py-12 text-center text-slate-500">
-                    Noch kein Scan gelaufen.
-                  </td>
-                </tr>
-              )}
+              {runs.length === 0 && <tr><td colSpan={7} className="px-5 py-12 text-center text-slate-500">Noch kein Scan gelaufen.</td></tr>}
               {runs.map((r) => (
                 <tr key={r.id} className="border-t border-white/50">
-                  <td className="px-5 py-3 text-[11px] text-slate-700">
-                    {new Date(r.started_at).toLocaleString("de-DE")}
-                  </td>
+                  <td className="px-5 py-3 text-[11px] text-slate-700">{new Date(r.started_at).toLocaleString("de-DE")}</td>
                   <td className="px-5 py-3 text-[11px] capitalize">{r.region ?? "—"}</td>
                   <td className="px-5 py-3 text-[11px] text-slate-500">{r.triggered_by ?? "—"}</td>
                   <td className="px-5 py-3 text-[11px]">{r.raw_results}</td>
-                  <td className="px-5 py-3 text-[11px] font-semibold text-emerald-700">
-                    {r.new_hits}
-                  </td>
+                  <td className="px-5 py-3 text-[11px] font-semibold text-emerald-700">{r.new_hits}</td>
                   <td className="px-5 py-3 text-[11px]">{r.updated_hits}</td>
-                  <td className="px-5 py-3">
-                    <span
-                      className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${
-                        r.status === "success"
-                          ? "bg-emerald-100/80 text-emerald-800"
-                          : r.status === "partial"
-                            ? "bg-amber-100/80 text-amber-800"
-                            : r.status === "failed"
-                              ? "bg-red-100/80 text-red-800"
-                              : "bg-slate-100/80 text-slate-700"
-                      }`}
-                    >
-                      {r.status}
-                    </span>
-                  </td>
+                  <td className="px-5 py-3"><span className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${r.status === "success" ? "bg-emerald-100/80 text-emerald-800" : r.status === "partial" ? "bg-amber-100/80 text-amber-800" : r.status === "failed" ? "bg-red-100/80 text-red-800" : "bg-slate-100/80 text-slate-700"}`}>{r.status}</span></td>
                 </tr>
               ))}
             </tbody>

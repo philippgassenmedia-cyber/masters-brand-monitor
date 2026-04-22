@@ -134,24 +134,20 @@ export function ScanClient() {
 
       {/* Controls — hide while a web scan is active */}
       {!isWebScan || phase === "idle" ? (
-        <section className="glass mb-3 p-5">
-          <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
+        <section className="glass mb-3 p-3 md:p-5">
+          <div className="flex flex-col gap-3">
             <div className="grid gap-3 sm:grid-cols-3">
               {/* Region */}
               <div>
-                <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">
-                  Region
-                </div>
-                <div className="inline-flex rounded-full border border-white/80 bg-orange-50/70 p-1 shadow-[0_2px_12px_rgba(120,90,60,0.06)] backdrop-blur-md">
+                <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">Region</div>
+                <div className="flex flex-wrap gap-1 rounded-full border border-white/80 bg-orange-50/70 p-1 shadow-[0_2px_12px_rgba(120,90,60,0.06)] backdrop-blur-md">
                   {REGIONS.map((r) => (
                     <button
                       key={r.value}
                       type="button"
                       onClick={() => setRegion(r.value)}
-                      className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
-                        region === r.value
-                          ? "bg-stone-900 text-white shadow"
-                          : "text-stone-600 hover:text-stone-900"
+                      className={`rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                        region === r.value ? "bg-stone-900 text-white shadow" : "text-stone-600 hover:text-stone-900"
                       }`}
                     >
                       {r.label}
@@ -159,65 +155,35 @@ export function ScanClient() {
                   ))}
                 </div>
               </div>
-
               {/* Mode */}
               <div>
-                <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">
-                  Modus
-                </div>
+                <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">Modus</div>
                 <div className="inline-flex rounded-full border border-white/80 bg-orange-50/70 p-1 shadow-[0_2px_12px_rgba(120,90,60,0.06)] backdrop-blur-md">
-                  <button
-                    type="button"
-                    onClick={() => setMode("quick")}
-                    className={`rounded-full px-5 py-2 text-xs font-semibold transition ${
-                      mode === "quick"
-                        ? "bg-stone-900 text-white shadow"
-                        : "text-stone-600 hover:text-stone-900"
-                    }`}
-                  >
-                    Quick
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode("deep")}
-                    className={`rounded-full px-5 py-2 text-xs font-semibold transition ${
-                      mode === "deep"
-                        ? "bg-stone-900 text-white shadow"
-                        : "text-stone-600 hover:text-stone-900"
-                    }`}
-                  >
-                    Deep
-                  </button>
+                  {(["quick", "deep"] as const).map((m) => (
+                    <button key={m} type="button" onClick={() => setMode(m)}
+                      className={`rounded-full px-5 py-1.5 text-xs font-semibold transition ${mode === m ? "bg-stone-900 text-white shadow" : "text-stone-600 hover:text-stone-900"}`}>
+                      {m === "quick" ? "Quick" : "Deep"}
+                    </button>
+                  ))}
                 </div>
               </div>
-
               {/* Free text */}
               <div>
-                <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">
-                  Freitext (optional)
-                </div>
-                <input
-                  type="text"
-                  value={freeText}
-                  onChange={(e) => setFreeText(e.target.value)}
+                <div className="mb-1.5 px-1 text-[10px] uppercase tracking-wider text-stone-500">Freitext (optional)</div>
+                <input type="text" value={freeText} onChange={(e) => setFreeText(e.target.value)}
                   placeholder="z.B. Hausverwaltung Master"
                   className="h-10 w-full rounded-full border border-white/80 bg-orange-50/70 px-4 text-sm text-stone-800 placeholder:text-stone-400 outline-none transition focus:border-stone-400 focus:bg-white/90"
                 />
               </div>
             </div>
-
-            <div className="flex items-end">
-              <div className="text-[11px] text-stone-500">
-                Quick: ~5–15 Abfragen · Deep: ~30–80 Abfragen
-              </div>
-            </div>
+            <div className="text-[11px] text-stone-500">Quick: ~5–15 Abfragen · Deep: ~30–80 Abfragen</div>
           </div>
         </section>
       ) : null}
 
       {/* Status bar */}
-      <section className="glass mb-3 px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+      <section className="glass mb-3 px-3 py-3 md:px-5 md:py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             {running ? (
               <span className="relative flex h-3 w-3">
@@ -327,23 +293,19 @@ export function ScanClient() {
 
       {/* Map + Log + Results */}
       {isWebScan && (running || log.length > 0) && (
-        <section className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)_minmax(0,1fr)]">
-          {/* Germany Map */}
-          <div className="glass flex flex-col overflow-hidden p-4">
-            <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wider text-stone-600">
-              Abdeckung
-            </h2>
+        <section className="grid gap-3 lg:grid-cols-[260px_minmax(0,1fr)_minmax(0,1fr)]">
+          {/* Germany Map — hidden on mobile to save space */}
+          <div className="glass hidden flex-col overflow-hidden p-4 lg:flex">
+            <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wider text-stone-600">Abdeckung</h2>
             <div className="flex items-center justify-center" style={{ height: 300 }}>
               <GermanyMap cities={SCAN_CITIES} states={cityStates} hitCount={hitCounts} />
             </div>
           </div>
 
           {/* Log */}
-          <div className="glass flex flex-col p-4">
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">
-              Live-Log
-            </h2>
-            <div className="scroll-area overflow-y-auto rounded-xl bg-stone-950 p-3 font-mono text-[11px] text-stone-200" style={{ height: 300 }}>
+          <div className="glass flex flex-col p-3 md:p-4">
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">Live-Log</h2>
+            <div className="scroll-area overflow-y-auto rounded-xl bg-stone-950 p-3 font-mono text-[11px] text-stone-200" style={{ height: 260 }}>
               {log.map((l, i) => (
                 <div
                   key={i}
@@ -368,11 +330,9 @@ export function ScanClient() {
           </div>
 
           {/* New hits */}
-          <div className="glass flex flex-col p-4">
-            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">
-              Neue Treffer · {newHits.length}
-            </h2>
-            <div className="scroll-area space-y-2 overflow-y-auto pr-1" style={{ height: 300 }}>
+          <div className="glass flex flex-col p-3 md:p-4">
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">Neue Treffer · {newHits.length}</h2>
+            <div className="scroll-area space-y-2 overflow-y-auto pr-1" style={{ height: 260 }}>
               {newHits.length === 0 && !running && (
                 <div className="flex h-full items-center justify-center text-xs text-stone-500">
                   Noch keine neuen Treffer.

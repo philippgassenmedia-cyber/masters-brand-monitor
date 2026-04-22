@@ -90,7 +90,7 @@ export function Sidebar({
   const scanHref = scan.source === "web" ? "/scan" : "/trademarks/scan";
   const SOURCE_LABEL: Record<string, string> = { web: "Web-Scan", dpma: "DPMA-Suche", euipo: "EUIPO-Suche" };
   return (
-    <aside className="glass-sidebar relative z-10 flex h-full w-60 shrink-0 flex-col overflow-visible p-5">
+    <aside className="glass-sidebar relative z-10 flex h-full w-full shrink-0 flex-col overflow-hidden p-4 md:w-60 md:p-5">
       <div className="mb-8 flex items-center gap-2">
         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-900 text-lg font-black text-white shadow-sm">
           M
