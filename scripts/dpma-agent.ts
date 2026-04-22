@@ -1,48 +1,80 @@
 /**
  * Lokaler DPMA-Agent — läuft auf deinem Rechner mit echtem Chrome.
- * Startet mit: npm run dpma-agent
  *
- * Funktionsweise:
- *   1. Holt offene Jobs aus Supabase (dpma_scan_jobs)
- *   2. Führt den Scan mit lokalem Chrome durch
- *   3. Schreibt Events in dpma_scan_events
- *   4. Vercel-UI liest die Events und zeigt sie live an
+ * Starten:
+ *   npm run dpma-agent
+ *
+ * Voraussetzung (einmalig in Supabase SQL-Editor ausführen):
+ *   supabase/migrations/0016_dpma_scan_jobs.sql
+ *
+ * Ablauf:
+ *   1. Dieser Prozess läuft auf deinem Rechner
+ *   2. Vercel-UI erstellt einen Job in Supabase
+ *   3. Agent nimmt Job auf, startet Chrome lokal, scrapt DPMA
+ *   4. Events werden in Supabase geschrieben
+ *   5. Vercel-UI zeigt die Events live an
  */
-import "dotenv/config";
 import { createClient } from "@supabase/supabase-js";
 import { runDpmaSearchStream, type DpmaSearchOptions } from "../src/lib/dpma/register-search-stream";
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.error("Fehlende Umgebungsvariablen: NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY");
+// ── Startup-Check ─────────────────────────────────────────────────────────
+console.log("\n═══════════════════════════════════════════");
+console.log("  DPMA Lokaler Agent");
+console.log("═══════════════════════════════════════════");
+
+if (!SUPABASE_URL) {
+  console.error("✗ NEXT_PUBLIC_SUPABASE_URL fehlt in .env.local");
+  process.exit(1);
+}
+if (!SUPABASE_KEY) {
+  console.error("✗ SUPABASE_SERVICE_ROLE_KEY fehlt in .env.local");
   process.exit(1);
 }
 
+console.log(`✓ Supabase: ${SUPABASE_URL}`);
+console.log(`✓ Service Key: ${SUPABASE_KEY.slice(0, 20)}…`);
+console.log("───────────────────────────────────────────\n");
+
 const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 
+// ── Verbindung testen ─────────────────────────────────────────────────────
+async function testConnection() {
+  const { error } = await db.from("dpma_scan_jobs").select("id").limit(1);
+  if (error) {
+    if (error.message.includes("does not exist") || error.code === "42P01") {
+      console.error("✗ Tabelle 'dpma_scan_jobs' existiert nicht in Supabase.");
+      console.error("  → Bitte supabase/migrations/0016_dpma_scan_jobs.sql im Supabase SQL-Editor ausführen.");
+    } else {
+      console.error("✗ Supabase-Verbindungsfehler:", error.message);
+    }
+    process.exit(1);
+  }
+  console.log("✓ Supabase verbunden · Tabellen vorhanden");
+  console.log("  Warte auf Jobs von der Vercel-UI…\n");
+}
+
+// ── Job verarbeiten ───────────────────────────────────────────────────────
 async function processJob(jobId: string, stems: string[], options: DpmaSearchOptions) {
-  console.log(`[Agent] Job ${jobId.slice(0, 8)} gestartet — Stämme: ${stems.join(", ")}`);
+  console.log(`\n[Job ${jobId.slice(0, 8)}] Gestartet — Stämme: ${stems.join(", ")}`);
+  console.log(`[Job ${jobId.slice(0, 8)}] Optionen: ${JSON.stringify(options)}\n`);
 
   const insertEvent = async (event: unknown) => {
-    await db.from("dpma_scan_events").insert({ job_id: jobId, event });
+    const { error } = await db.from("dpma_scan_events").insert({ job_id: jobId, event });
+    if (error) console.error("  Event-Fehler:", error.message);
   };
 
   try {
     for await (const event of runDpmaSearchStream(stems, options)) {
       await insertEvent(event);
 
-      // Kurzlog in der Konsole
-      if ("message" in (event as object)) {
-        console.log(`  ${(event as { message: string }).message}`);
-      } else if ((event as { type: string }).type === "hit:new") {
-        const e = event as { aktenzeichen: string; markenname: string };
-        console.log(`  ✓ NEU: ${e.markenname} (${e.aktenzeichen})`);
-      } else if ((event as { type: string }).type === "done") {
-        const e = event as { totalFound: number; newTrademarks: number };
-        console.log(`  Fertig: ${e.totalFound} gefunden, ${e.newTrademarks} neu`);
-      }
+      const e = event as Record<string, unknown>;
+      if (e.type === "status")   console.log(`  ${e.message}`);
+      if (e.type === "error")    console.error(`  ✗ ${e.message}`);
+      if (e.type === "hit:new")  console.log(`  ✓ NEU: ${e.markenname} (${e.aktenzeichen})`);
+      if (e.type === "done")     console.log(`\n  Fertig: ${e.totalFound} gefunden, ${e.newTrademarks} neu, ${e.errors} Fehler`);
     }
 
     await db.from("dpma_scan_jobs").update({
@@ -50,10 +82,10 @@ async function processJob(jobId: string, stems: string[], options: DpmaSearchOpt
       finished_at: new Date().toISOString(),
     }).eq("id", jobId);
 
-    console.log(`[Agent] Job ${jobId.slice(0, 8)} abgeschlossen.`);
+    console.log(`\n[Job ${jobId.slice(0, 8)}] ✓ Abgeschlossen\n`);
   } catch (e) {
-    console.error(`[Agent] Job ${jobId.slice(0, 8)} fehlgeschlagen:`, e);
-    await insertEvent({ type: "error", message: (e as Error).message });
+    console.error(`\n[Job ${jobId.slice(0, 8)}] ✗ Fehlgeschlagen:`, e);
+    await insertEvent({ type: "error", message: String((e as Error).message ?? e) });
     await db.from("dpma_scan_jobs").update({
       status: "failed",
       finished_at: new Date().toISOString(),
@@ -61,11 +93,11 @@ async function processJob(jobId: string, stems: string[], options: DpmaSearchOpt
   }
 }
 
+// ── Haupt-Loop ────────────────────────────────────────────────────────────
 async function main() {
-  console.log("DPMA-Agent gestartet. Warte auf Jobs…");
-  console.log(`Supabase: ${SUPABASE_URL}`);
+  await testConnection();
 
-  // Hängengebliebene Jobs der letzten 10 Minuten zurücksetzen
+  // Hängengebliebene Jobs zurücksetzen
   await db.from("dpma_scan_jobs")
     .update({ status: "pending", picked_up_at: null })
     .eq("status", "running")
@@ -73,7 +105,7 @@ async function main() {
 
   while (true) {
     try {
-      const { data: job } = await db
+      const { data: job, error } = await db
         .from("dpma_scan_jobs")
         .select("id, stems, options")
         .eq("status", "pending")
@@ -81,24 +113,28 @@ async function main() {
         .limit(1)
         .maybeSingle();
 
-      if (job) {
-        // Als "running" markieren
-        const { error } = await db
+      if (error) {
+        console.error("Polling-Fehler:", error.message);
+      } else if (job) {
+        const { error: updateError } = await db
           .from("dpma_scan_jobs")
           .update({ status: "running", picked_up_at: new Date().toISOString() })
           .eq("id", job.id)
-          .eq("status", "pending"); // nur wenn noch pending (race condition guard)
+          .eq("status", "pending");
 
-        if (!error) {
+        if (!updateError) {
           await processJob(job.id, job.stems as string[], (job.options ?? {}) as DpmaSearchOptions);
         }
       }
     } catch (e) {
-      console.error("[Agent] Polling-Fehler:", e);
+      console.error("Unerwarteter Fehler:", e);
     }
 
     await new Promise((r) => setTimeout(r, 3000));
   }
 }
 
-main().catch(console.error);
+main().catch((e) => {
+  console.error("Agent-Fehler:", e);
+  process.exit(1);
+});

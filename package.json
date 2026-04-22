@@ -9,7 +9,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "dpma-scan": "tsx --tsconfig tsconfig.json scripts/dpma-scan.ts",
-    "dpma-agent": "tsx --tsconfig tsconfig.json scripts/dpma-agent.ts"
+    "dpma-agent": "tsx --env-file=.env.local --tsconfig tsconfig.json scripts/dpma-agent.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
