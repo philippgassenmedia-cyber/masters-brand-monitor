@@ -1,4 +1,3 @@
-#!/usr/bin/env npx tsx
 /**
  * Standalone DPMA Register-Scanner.
  * Läuft lokal oder in GitHub Actions mit echtem Chrome.
@@ -13,15 +12,8 @@
  *   npx tsx scripts/scan-dpma.ts --klassen "36 37 42"
  */
 
+import { chromium } from "playwright";
 import { createClient } from "@supabase/supabase-js";
-
-// Dynamisch: playwright (hat Browser-Management) oder playwright-core (Fallback)
-let chromium: typeof import("playwright-core").chromium;
-try {
-  chromium = (await import("playwright")).chromium;
-} catch {
-  chromium = (await import("playwright-core")).chromium;
-}
 
 // ── Config ──────────────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL;
