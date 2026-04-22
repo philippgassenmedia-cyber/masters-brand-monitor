@@ -129,19 +129,28 @@ export async function* runDpmaSearchStream(
     return { hits, diag };
   }
 
+  // Einen einzigen Browser für alle Stämme → nur 1 WebSocket-Verbindung zu Browserless
+  yield { type: "status", message: "Chrome wird gestartet (kann 10-20s dauern)…" };
+  let browser;
+  try {
+    browser = await launchBrowser();
+  } catch (e) {
+    yield { type: "error", message: `Browser-Start fehlgeschlagen: ${(e as Error).message.slice(0, 200)}` };
+    yield { type: "done", totalFound: 0, newTrademarks: 0, updated: 0, errors: 1 };
+    return;
+  }
+  yield { type: "status", message: "Chrome gestartet." };
+  const ctx = await createStealthContext(browser);
+
   for (const stem of stems) {
     try {
       const s = stem.charAt(0).toUpperCase() + stem.slice(1).toLowerCase();
-      const phonetic = getTopVariants(stem, 8).filter((v) => v.toLowerCase() !== stem.toLowerCase());
+      // Phonetik auf 3 begrenzen um Browserless-Rate-Limits zu vermeiden
+      const phonetic = getTopVariants(stem, 3).filter((v) => v.toLowerCase() !== stem.toLowerCase()).slice(0, 3);
       const searchTerms = [s, `${s}*`, `*${s}`, ...phonetic];
-      yield { type: "status", message: `Suche nach „${stem}" (exakt + Wildcards + ${phonetic.length} phonetische Varianten)` };
+      yield { type: "status", message: `Suche nach „${stem}" — ${searchTerms.length} Begriffe (exakt, Wildcards, ${phonetic.length} phonetisch)` };
 
-      yield { type: "status", message: "Chrome wird gestartet (kann 10-20s dauern)…" };
-      const browser = await launchBrowser();
-      yield { type: "status", message: "Chrome gestartet. Öffne DPMAregister…" };
-      const ctx = await createStealthContext(browser);
-
-      // PHASE 1: Varianten sequentiell durchsuchen (1 Tab, kein Parallelbetrieb → weniger Bot-Detection)
+      // PHASE 1: Varianten sequentiell durchsuchen
       const seenAz = new Set<string>();
       const basicHits: Array<{ az: string; name: string; status: string | null }> = [];
 
@@ -164,7 +173,6 @@ export async function* runDpmaSearchStream(
       yield { type: "status", message: `${basicHits.length} Treffer aus ${searchTerms.length} Suchen. Lade Details…` };
 
       if (basicHits.length === 0 || !browser.isConnected()) {
-        try { await browser.close(); } catch {}
         continue;
       }
 
@@ -175,7 +183,6 @@ export async function* runDpmaSearchStream(
       } catch (e) {
         yield { type: "error", message: `Suche „${stem}": Detail-Tab konnte nicht geöffnet werden — ${(e as Error).message.slice(0, 150)}` };
         errorCount++;
-        try { await browser.close(); } catch {}
         continue;
       }
       await addStealthScripts(detailPage);
@@ -210,13 +217,16 @@ export async function* runDpmaSearchStream(
         }
       }
 
-      try { await browser.close(); } catch {}
-      yield { type: "status", message: `Chrome geschlossen. ${allHits.length} Treffer (${searchTerms.length} Suchen).` };
+      try { await detailPage.close(); } catch {}
+      yield { type: "status", message: `${stem}: ${allHits.length} Treffer gesamt.` };
     } catch (e) {
       errorCount++;
       yield { type: "error", message: `Suche „${stem}": ${(e as Error).message.slice(0, 200)}` };
     }
   }
+
+  try { await browser.close(); } catch {}
+  yield { type: "status", message: "Chrome geschlossen." };
 
   // Deduplizieren
   const seen = new Set<string>();
