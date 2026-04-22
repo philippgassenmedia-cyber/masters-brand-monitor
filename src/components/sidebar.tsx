@@ -89,6 +89,7 @@ export function Sidebar({
   const scanPct = scan.progress.total > 0 ? Math.round((scan.progress.current / scan.progress.total) * 100) : 0;
   const scanHref = scan.source === "web" ? "/scan" : "/trademarks/scan";
   const SOURCE_LABEL: Record<string, string> = { web: "Web-Scan", dpma: "DPMA-Suche", euipo: "EUIPO-Suche" };
+  const latestHits = scan.rawHits.slice(0, 3) as Array<Record<string, unknown>>;
   return (
     <aside className="glass-sidebar relative z-10 flex h-full w-full shrink-0 flex-col overflow-hidden p-4 md:w-60 md:p-5">
       <div className="mb-8 flex items-center gap-2">
@@ -168,6 +169,32 @@ export function Sidebar({
                   className="h-full rounded-full bg-emerald-600 transition-all duration-300"
                   style={{ width: `${Math.max(2, scanPct)}%` }}
                 />
+              </div>
+            )}
+            {/* Letzte Treffer direkt in der Sidebar */}
+            {latestHits.length > 0 && (
+              <div className="mt-2 space-y-1 border-t border-emerald-200/60 pt-2">
+                {latestHits.map((h, i) => {
+                  const label = String(h.domain ?? h.markenname ?? "");
+                  const id = String(h.id ?? "");
+                  const az = String(h.aktenzeichen ?? "");
+                  const href = id
+                    ? (scan.source === "web" ? `/hits/${id}` : `/trademarks/${id}`)
+                    : az ? `https://register.dpma.de/DPMAregister/marke/register/${az}/DE` : "#";
+                  return (
+                    <a
+                      key={i}
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-[10px] text-emerald-800 hover:bg-emerald-100"
+                    >
+                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+                      <span className="truncate">{label}</span>
+                    </a>
+                  );
+                })}
               </div>
             )}
           </Link>
