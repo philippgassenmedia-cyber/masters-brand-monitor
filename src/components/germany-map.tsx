@@ -51,8 +51,8 @@ export function GermanyMap({ cities, states, hitCount }: GermanyMapProps) {
     <svg
       ref={svgRef}
       viewBox={`0 0 ${width} ${height}`}
-      className="h-full w-full"
-      style={{ maxHeight: "100%", display: "block" }}
+      className="h-full w-auto"
+      style={{ maxWidth: "100%", display: "block" }}
     >
       {/* Background */}
       <rect width={width} height={height} fill="transparent" />

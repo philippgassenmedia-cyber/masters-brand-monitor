@@ -324,23 +324,23 @@ export function ScanClient() {
 
       {/* Map + Log + Results */}
       {isWebScan && (running || log.length > 0) && (
-        <section className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[280px_minmax(0,1fr)_minmax(0,1fr)]">
+        <section className="grid gap-3 lg:grid-cols-[280px_minmax(0,1fr)_minmax(0,1fr)]">
           {/* Germany Map */}
-          <div className="glass flex min-h-0 flex-col overflow-hidden p-4">
+          <div className="glass flex flex-col overflow-hidden p-4">
             <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wider text-stone-600">
               Abdeckung
             </h2>
-            <div className="flex min-h-0 flex-1 items-center justify-center">
+            <div className="flex items-center justify-center" style={{ height: 300 }}>
               <GermanyMap cities={SCAN_CITIES} states={cityStates} hitCount={hitCounts} />
             </div>
           </div>
 
           {/* Log */}
-          <div className="glass flex min-h-0 flex-col p-4">
+          <div className="glass flex flex-col p-4">
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">
               Live-Log
             </h2>
-            <div className="scroll-area min-h-0 flex-1 overflow-y-auto rounded-xl bg-stone-950 p-3 font-mono text-[11px] text-stone-200">
+            <div className="scroll-area overflow-y-auto rounded-xl bg-stone-950 p-3 font-mono text-[11px] text-stone-200" style={{ height: 300 }}>
               {log.map((l, i) => (
                 <div
                   key={i}
@@ -365,11 +365,11 @@ export function ScanClient() {
           </div>
 
           {/* New hits */}
-          <div className="glass flex min-h-0 flex-col p-4">
+          <div className="glass flex flex-col p-4">
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">
               Neue Treffer · {newHits.length}
             </h2>
-            <div className="scroll-area min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+            <div className="scroll-area space-y-2 overflow-y-auto pr-1" style={{ height: 300 }}>
               {newHits.length === 0 && !running && (
                 <div className="flex h-full items-center justify-center text-xs text-stone-500">
                   Noch keine neuen Treffer.
