@@ -850,7 +850,7 @@ function DpmaAgentSection() {
           </p>
         </div>
         <button
-          onClick={() => setOpen(!open)}
+          onClick={handleOpen}
           className="shrink-0 rounded-full border border-white/80 bg-white/60 px-4 py-2 text-xs font-semibold text-stone-700 hover:bg-white/90"
         >
           {open ? "Schließen" : "Einrichtung"}
@@ -877,50 +877,52 @@ function DpmaAgentSection() {
             </button>
           </div>
 
-          {configLoading && (
-            <div className="flex items-center gap-2 text-xs text-stone-500">
-              <div className="h-4 w-4 animate-spin rounded-full border-2 border-stone-300 border-t-stone-700" />
-              Lade Konfiguration…
-            </div>
-          )}
-          {configError && (
-            <div className="rounded-xl border border-rose-200 bg-rose-50/80 px-4 py-2 text-xs text-rose-800">{configError}</div>
-          )}
+          {/* Schritt 1: Installation */}
+          <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
+            <div className="mb-1 text-sm font-semibold text-stone-900">Schritt 1 — Einmalig installieren</div>
+            <p className="mb-2 text-xs text-stone-600">
+              {s.openTerminal}. Dann diesen Befehl einfügen:
+            </p>
+            <CodeBlock text={installCmd[os]} />
+          </div>
 
-          {config && (
-            <>
-              {/* Einmalige Installation */}
-              <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
-                <div className="mb-1 text-sm font-semibold text-stone-900">Schritt 1 — Einmalig installieren</div>
-                <p className="mb-2 text-xs text-stone-600">
-                  {s.openTerminal}. Dann diesen Befehl einfügen:
-                </p>
-                <CodeBlock text={installCmd[os]} />
+          {/* Schritt 2: Agent starten */}
+          <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-4">
+            <div className="mb-1 text-sm font-semibold text-emerald-900">Schritt 2 — Agent starten</div>
+            <p className="mb-2 text-xs text-stone-600">
+              Diesen Befehl jedes Mal ausführen wenn der Agent gestartet werden soll.
+              Die Zugangsdaten sind bereits enthalten — keine Konfigurationsdatei nötig.
+            </p>
+            {configLoading && (
+              <div className="flex items-center gap-2 rounded-lg bg-stone-100 px-3 py-2 text-xs text-stone-500">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-stone-300 border-t-stone-700" />
+                Lade Startbefehl…
               </div>
-
-              {/* Agent starten */}
-              <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-4">
-                <div className="mb-1 text-sm font-semibold text-emerald-900">Schritt 2 — Agent starten</div>
-                <p className="mb-2 text-xs text-stone-600">
-                  Diesen Befehl jedes Mal ausführen wenn der Agent gestartet werden soll.
-                  Die Zugangsdaten sind bereits enthalten — keine Konfigurationsdatei nötig.
-                </p>
+            )}
+            {configError && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50/80 px-3 py-2 text-xs text-rose-800">
+                {configError}
+                <button onClick={loadConfig} className="ml-2 font-semibold underline">Erneut versuchen</button>
+              </div>
+            )}
+            {config && (
+              <>
                 <CodeBlock text={startCmd[os]} />
                 <p className="mt-2 text-[11px] text-stone-500">
                   Fenster offen lassen. Zum Stoppen: <kbd className="rounded border border-stone-300 bg-stone-100 px-1 py-0.5 text-[10px] font-semibold">{s.stopKey}</kbd>
                 </p>
-              </div>
+              </>
+            )}
+          </div>
 
-              {/* Scan starten */}
-              <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
-                <div className="mb-1 text-sm font-semibold text-stone-900">Schritt 3 — Scan starten</div>
-                <p className="text-xs text-stone-600">
-                  Weiter unten auf dieser Seite unter <strong>Geplante Scans</strong>: Typ <strong>DPMA</strong> wählen → <strong>Planen</strong> → <strong>Jetzt</strong>.
-                  Der Agent führt den Scan automatisch aus.
-                </p>
-              </div>
-            </>
-          )}
+          {/* Schritt 3: Scan starten */}
+          <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
+            <div className="mb-1 text-sm font-semibold text-stone-900">Schritt 3 — Scan starten</div>
+            <p className="text-xs text-stone-600">
+              Weiter unten auf dieser Seite unter <strong>Geplante Scans</strong>: Typ <strong>DPMA</strong> wählen → <strong>Planen</strong> → <strong>Jetzt</strong>.
+              Der Agent führt den Scan automatisch aus.
+            </p>
+          </div>
 
           {/* Voraussetzungen */}
           <details className="group">
