@@ -776,129 +776,144 @@ function ScheduledScansSection() {
 
 function DpmaAgentSection() {
   const [open, setOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [os, setOs] = useState<"windows" | "mac">("windows");
 
-  const installScript = `# ══════════════════════════════════════════════════
-# DPMA Register Agent — Einrichtung (Windows)
-# Öffne PowerShell und führe diese Befehle aus.
-# ══════════════════════════════════════════════════
-
-# 1. Projektordner anlegen
-mkdir C:\\dpma-agent
-cd C:\\dpma-agent
-
-# 2. Repository klonen (einmalig)
-git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .
-
-# 3. Abhängigkeiten installieren
-npm install
-
-# 4. Umgebungsvariablen anlegen (Werte anpassen!)
-@"
-NEXT_PUBLIC_SUPABASE_URL=DEINE_SUPABASE_URL
-SUPABASE_SERVICE_ROLE_KEY=DEIN_SERVICE_ROLE_KEY
-GEMINI_API_KEY=DEIN_GEMINI_KEY
-"@ | Out-File -Encoding UTF8 .env.local
-
-# 5. Agent starten
-npm run scan:agent
-
-# Der Agent läuft jetzt und wartet auf Aufträge.
-# Zum Stoppen: Strg+C`;
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(installScript);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const oneLineSetup = {
+    windows: `powershell -Command "mkdir C:\\dpma-agent -Force; cd C:\\dpma-agent; git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . 2>$null; npm install; npm run scan:agent"`,
+    mac: `mkdir -p ~/dpma-agent && cd ~/dpma-agent && git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . 2>/dev/null; npm install && npm run scan:agent`,
   };
+
+  const steps = {
+    windows: {
+      prereqs: [
+        { name: "Google Chrome", url: "https://www.google.com/chrome/" },
+        { name: "Node.js (LTS)", url: "https://nodejs.org", hint: "Installer herunterladen und ausführen" },
+        { name: "Git", url: "https://git-scm.com/download/win", hint: "Installer mit Standard-Einstellungen" },
+      ],
+      openTerminal: <>Drücke <kbd className="rounded border border-stone-300 bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold">Win + X</kbd> → <strong>Terminal</strong> oder <strong>PowerShell</strong></>,
+      cloneCmd: `mkdir C:\\dpma-agent\ncd C:\\dpma-agent\ngit clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .\nnpm install`,
+      envPath: "C:\\dpma-agent\\.env.local",
+      envHint: "Rechtsklick auf den Ordner → Neue Textdatei → Umbenennen zu .env.local → Mit Editor öffnen",
+      startCmd: `cd C:\\dpma-agent\nnpm run scan:agent`,
+      stopKey: "Strg+C",
+    },
+    mac: {
+      prereqs: [
+        { name: "Google Chrome", url: "https://www.google.com/chrome/" },
+        { name: "Node.js (LTS)", url: "https://nodejs.org", hint: "Installer herunterladen und ausführen" },
+      ],
+      openTerminal: <>Öffne <strong>Spotlight</strong> (Cmd + Leertaste) → tippe <strong>Terminal</strong> → Enter</>,
+      cloneCmd: `mkdir -p ~/dpma-agent && cd ~/dpma-agent\ngit clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .\nnpm install`,
+      envPath: "~/dpma-agent/.env.local",
+      envHint: "Im Terminal: nano ~/dpma-agent/.env.local — einfügen, Ctrl+X, Y, Enter",
+      startCmd: `cd ~/dpma-agent\nnpm run scan:agent`,
+      stopKey: "Ctrl+C",
+    },
+  };
+
+  const s = steps[os];
 
   return (
     <section className="glass mt-6 p-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold text-stone-900">DPMA Register-Agent</h2>
           <p className="mt-1 text-xs text-stone-600">
-            Das DPMA-Register erfordert einen lokalen Browser. Der Agent läuft auf deinem Rechner
-            und führt Register-Scans aus, wenn du sie hier in der Web-Oberfläche startest.
+            Für die DPMA-Register-Suche wird ein kleines Programm auf deinem Computer benötigt.
+            Einmal eingerichtet, kannst du Scans direkt von hier starten.
           </p>
         </div>
         <button
           onClick={() => setOpen(!open)}
           className="shrink-0 rounded-full border border-white/80 bg-white/60 px-4 py-2 text-xs font-semibold text-stone-700 hover:bg-white/90"
         >
-          {open ? "Schließen" : "Einrichtung anzeigen"}
+          {open ? "Schließen" : "Einrichtung"}
         </button>
       </div>
 
       {open && (
-        <div className="mt-4 space-y-4">
-          <div className="space-y-3">
-            <Step n={1} title="Voraussetzungen installieren">
-              <ul className="list-inside list-disc space-y-1">
-                <li>
-                  <a href="https://www.google.com/chrome/" target="_blank" rel="noopener" className="underline hover:text-stone-900">Google Chrome</a> installiert
-                </li>
-                <li>
-                  <a href="https://nodejs.org" target="_blank" rel="noopener" className="underline hover:text-stone-900">Node.js 20+</a> installiert
-                  <span className="ml-1 text-stone-400">(LTS-Version herunterladen, Installer ausführen)</span>
-                </li>
-                <li>
-                  <a href="https://git-scm.com/download/win" target="_blank" rel="noopener" className="underline hover:text-stone-900">Git für Windows</a> installiert
-                  <span className="ml-1 text-stone-400">(Standard-Einstellungen beibehalten)</span>
-                </li>
-              </ul>
-            </Step>
-
-            <Step n={2} title="PowerShell öffnen">
-              <p>Drücke <code className="rounded bg-stone-200/60 px-1.5 py-0.5 text-[11px] font-semibold">Windows + X</code> und wähle <strong>&quot;Windows PowerShell&quot;</strong> oder <strong>&quot;Terminal&quot;</strong>.</p>
-            </Step>
-
-            <Step n={3} title="Projekt herunterladen">
-              <p>Kopiere diese Befehle in die PowerShell und drücke Enter:</p>
-              <CodeBlock text={`mkdir C:\\dpma-agent\ncd C:\\dpma-agent\ngit clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git .\nnpm install`} />
-            </Step>
-
-            <Step n={4} title="Zugangsdaten eintragen">
-              <p>Erstelle die Datei <code className="rounded bg-stone-200/60 px-1 py-0.5 text-[11px]">C:\dpma-agent\.env.local</code> mit einem Texteditor (z.B. Notepad). Inhalt:</p>
-              <CodeBlock text={`NEXT_PUBLIC_SUPABASE_URL=deine-supabase-url\nSUPABASE_SERVICE_ROLE_KEY=dein-service-role-key\nGEMINI_API_KEY=dein-gemini-key`} />
-              <p className="mt-1.5 text-stone-500">Ersetze die Werte mit deinen echten Schlüsseln aus dem Supabase-Dashboard und Google AI Studio.</p>
-            </Step>
-
-            <Step n={5} title="Agent starten">
-              <CodeBlock text={`cd C:\\dpma-agent\nnpm run scan:agent`} />
-              <p className="mt-1">Der Agent prüft alle 30 Sekunden ob ein DPMA-Scan geplant wurde.</p>
-              <p className="mt-0.5 text-stone-500">Tipp: Lass das PowerShell-Fenster offen — solange es läuft, ist der Agent aktiv.</p>
-            </Step>
-
-            <Step n={6} title="Scan über die Webseite starten">
-              <p>Geh auf <strong>Einstellungen → Geplante Scans</strong> (weiter unten auf dieser Seite),
-              wähle Typ <strong>&quot;DPMA&quot;</strong> oder <strong>&quot;Web + DPMA&quot;</strong>,
-              klick <strong>&quot;Planen&quot;</strong> und dann <strong>&quot;Jetzt&quot;</strong>.</p>
-              <p className="mt-1">Der Agent auf deinem PC nimmt den Auftrag automatisch auf und startet Chrome im Hintergrund.</p>
-            </Step>
+        <div className="mt-5 space-y-5">
+          {/* OS Switch */}
+          <div className="flex items-center gap-1 rounded-full bg-stone-100 p-1 w-fit">
+            <button
+              onClick={() => setOs("windows")}
+              className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition ${os === "windows" ? "bg-stone-900 text-white shadow-sm" : "text-stone-500 hover:text-stone-800"}`}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
+              Windows
+            </button>
+            <button
+              onClick={() => setOs("mac")}
+              className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition ${os === "mac" ? "bg-stone-900 text-white shadow-sm" : "text-stone-500 hover:text-stone-800"}`}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+              macOS
+            </button>
           </div>
 
-          {/* Komplettes Setup-Script */}
-          <div className="rounded-xl border border-white/60 bg-white/40 p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold text-stone-700">Komplettes Setup-Script für PowerShell</span>
-              <button
-                onClick={copyToClipboard}
-                className="rounded-full bg-stone-900 px-3 py-1 text-[10px] font-semibold text-white hover:bg-stone-800"
-              >
-                {copied ? "Kopiert!" : "Kopieren"}
-              </button>
+          {/* Schnellstart */}
+          <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-4">
+            <div className="mb-2 text-sm font-semibold text-emerald-900">Schnellstart — 1 Befehl</div>
+            <p className="mb-2 text-xs text-stone-600">
+              {os === "windows" ? "PowerShell öffnen (Win+X → Terminal), " : "Terminal öffnen, "}
+              diesen Befehl einfügen und Enter drücken:
+            </p>
+            <CodeBlock text={oneLineSetup[os]} />
+            <p className="mt-2 text-[11px] text-stone-500">
+              Danach nur noch die Zugangsdaten eintragen (Schritt 3 unten).
+            </p>
+          </div>
+
+          {/* Ausführliche Anleitung */}
+          <details className="group">
+            <summary className="cursor-pointer text-xs font-semibold text-stone-600 hover:text-stone-900">
+              Ausführliche Anleitung anzeigen
+            </summary>
+            <div className="mt-4 space-y-4">
+              <Step n={1} title="Voraussetzungen">
+                <p className="mb-1.5">Diese Programme müssen installiert sein:</p>
+                <div className="space-y-1.5">
+                  {s.prereqs.map((p) => (
+                    <a key={p.name} href={p.url} target="_blank" rel="noopener"
+                      className="flex items-center gap-2 rounded-lg border border-white/70 bg-white/50 px-3 py-2 text-xs hover:bg-white/80 transition">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-stone-400">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+                      </svg>
+                      <span className="font-semibold text-stone-800">{p.name}</span>
+                      {p.hint && <span className="text-stone-400">— {p.hint}</span>}
+                    </a>
+                  ))}
+                </div>
+              </Step>
+
+              <Step n={2} title="Terminal öffnen">
+                <p>{s.openTerminal}</p>
+              </Step>
+
+              <Step n={3} title="Zugangsdaten eintragen">
+                <p>Erstelle die Datei <code className="rounded bg-stone-200/60 px-1 py-0.5 text-[11px]">{s.envPath}</code></p>
+                <p className="mt-0.5 text-stone-400">{s.envHint}</p>
+                <CodeBlock text={`NEXT_PUBLIC_SUPABASE_URL=deine-url-hier\nSUPABASE_SERVICE_ROLE_KEY=dein-key-hier\nGEMINI_API_KEY=dein-gemini-key-hier`} />
+              </Step>
+
+              <Step n={4} title="Agent starten">
+                <CodeBlock text={s.startCmd} />
+                <p className="mt-1.5">
+                  Das Fenster offen lassen — der Agent wartet auf Aufträge von dieser Webseite.
+                  Zum Stoppen: <kbd className="rounded border border-stone-300 bg-stone-100 px-1 py-0.5 text-[10px] font-semibold">{s.stopKey}</kbd>
+                </p>
+              </Step>
+
+              <Step n={5} title="Scan starten">
+                <p>Weiter unten unter <strong>Geplante Scans</strong>: Typ <strong>DPMA</strong> wählen → <strong>Planen</strong> → <strong>Jetzt</strong>.
+                Der Agent auf deinem PC startet den Scan automatisch.</p>
+              </Step>
             </div>
-            <pre className="max-h-48 overflow-auto rounded-lg bg-stone-900 p-3 text-[11px] leading-relaxed text-stone-300">
-              {installScript}
-            </pre>
-          </div>
+          </details>
 
           <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 p-3 text-xs text-stone-700">
-            <strong>Warum lokal?</strong> Das DPMA-Register blockiert automatisierte Zugriffe aus der Cloud.
-            Der Agent nutzt deinen lokalen Chrome-Browser, der vom DPMA nicht blockiert wird.
-            Solange das PowerShell-Fenster offen ist, kannst du Scans bequem über diese Webseite starten.
-            Zum Stoppen: <code className="rounded bg-stone-200/60 px-1 py-0.5">Strg+C</code> im PowerShell-Fenster.
+            <strong>Warum lokal?</strong> Das DPMA-Register blockiert Cloud-Zugriffe.
+            Der Agent nutzt deinen Chrome-Browser, den das DPMA nicht blockiert.
           </div>
         </div>
       )}
@@ -909,9 +924,7 @@ npm run scan:agent
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
     <div className="flex gap-3">
-      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-900 text-[10px] font-bold text-white">
-        {n}
-      </div>
+      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-stone-900 text-[10px] font-bold text-white">{n}</div>
       <div className="min-w-0 flex-1">
         <div className="mb-1 text-sm font-semibold text-stone-900">{title}</div>
         <div className="text-xs leading-relaxed text-stone-600">{children}</div>
@@ -924,9 +937,7 @@ function CodeBlock({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="group relative mt-1.5">
-      <pre className="rounded-lg bg-stone-900 p-2.5 text-[11px] leading-relaxed text-stone-300 overflow-x-auto">
-        {text}
-      </pre>
+      <pre className="rounded-lg bg-stone-900 p-2.5 text-[11px] leading-relaxed text-stone-300 overflow-x-auto">{text}</pre>
       <button
         onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
         className="absolute right-2 top-2 rounded bg-stone-700 px-2 py-0.5 text-[9px] text-stone-300 opacity-0 transition hover:bg-stone-600 group-hover:opacity-100"
