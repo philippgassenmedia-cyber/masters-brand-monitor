@@ -3,12 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { NIZZA_BESCHREIBUNG, IMMOBILIEN_KLASSEN } from "@/lib/dpma/nizza-klassen";
-
-interface LogLine {
-  ts: number;
-  tone: "info" | "ok" | "warn" | "err";
-  text: string;
-}
+import { useScan } from "@/components/scan-context";
 
 interface NewHit {
   id?: string;
@@ -28,13 +23,20 @@ const DEFAULT_KLASSEN = new Set([36, 37, 42]);
 type ScanSource = "dpma" | "euipo" | "both";
 
 export function DpmaScanClient() {
-  const [running, setRunning] = useState(false);
+  const { state, startScan, stopScan } = useScan();
+
+  // Local UI state only — filter inputs + UI toggles
   const [source, setSource] = useState<ScanSource>("dpma");
   const [nurDE, setNurDE] = useState(true);
   const [nurInKraft, setNurInKraft] = useState(true);
   const [selectedKlassen, setSelectedKlassen] = useState<Set<number>>(DEFAULT_KLASSEN);
   const [zeitraumMonate, setZeitraumMonate] = useState(3);
   const [klassenOpen, setKlassenOpen] = useState(false);
+  const [now, setNow] = useState(Date.now());
+  const [showSuccess, setShowSuccess] = useState(false);
+
+  const logEndRef = useRef<HTMLDivElement>(null);
+  const prevPhaseRef = useRef<string>(state.phase);
 
   const toggleKlasse = useCallback((k: number) => {
     setSelectedKlassen((prev) => {
@@ -46,193 +48,64 @@ export function DpmaScanClient() {
   }, []);
 
   const klassenString = [...selectedKlassen].sort((a, b) => a - b).join(" ");
-  const [log, setLog] = useState<LogLine[]>([]);
-  const [phase, setPhase] = useState<string>("idle");
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [kpis, setKpis] = useState({ found: 0, newHits: 0, updated: 0, errors: 0 });
-  const [newHits, setNewHits] = useState<NewHit[]>([]);
-  const [startedAt, setStartedAt] = useState<number | null>(null);
-  const [now, setNow] = useState(Date.now());
-  const [showSuccess, setShowSuccess] = useState(false);
-  const logEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
 
+  // Timer tick
   useEffect(() => {
-    if (!running) return;
+    if (!state.running) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [running]);
+  }, [state.running]);
 
+  // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [log]);
+  }, [state.log]);
 
-  const append = (tone: LogLine["tone"], text: string) =>
-    setLog((l) => [...l.slice(-200), { ts: Date.now(), tone, text }]);
+  // Success overlay when scan finishes while on this page
+  useEffect(() => {
+    const isDpmaSource = state.source === "dpma" || state.source === "euipo";
+    if (!isDpmaSource) return;
+    if (prevPhaseRef.current !== "done" && state.phase === "done") {
+      setShowSuccess(true);
+      const t = setTimeout(() => setShowSuccess(false), 3000);
+      return () => clearTimeout(t);
+    }
+    prevPhaseRef.current = state.phase;
+  }, [state.phase, state.source]);
 
-  const start = async () => {
-    setRunning(true);
-    setLog([]);
-    setPhase("browser");
-    setProgress({ current: 0, total: 0 });
-    setKpis({ found: 0, newHits: 0, updated: 0, errors: 0 });
-    setNewHits([]);
-    setShowSuccess(false);
-    const t0 = Date.now();
-    setStartedAt(t0);
-    setNow(t0);
-
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-
-    try {
-      const endpoints = source === "both"
+  const start = () => {
+    const endpoints =
+      source === "both"
         ? ["/api/dpma/search/stream", "/api/euipo/search/stream"]
         : source === "euipo"
           ? ["/api/euipo/search/stream"]
           : ["/api/dpma/search/stream"];
-
-      // Bei "Beide": parallel starten, Events von beiden Streams mergen
-      const bodyJson = JSON.stringify({ nurDE, nurInKraft, klassen: klassenString, zeitraumMonate });
-
-      if (endpoints.length > 1) {
-        append("info", "DPMA + EUIPO werden parallel durchsucht…");
-        const readers = await Promise.all(
-          endpoints.map(async (ep) => {
-            const r = await fetch(ep, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: bodyJson,
-              signal: ctrl.signal,
-            });
-            const label = ep.includes("euipo") ? "EUIPO" : "DPMA";
-            return { reader: r.body?.getReader() ?? null, label, done: false };
-          }),
-        );
-
-        const decoder = new TextDecoder();
-        const buffers = readers.map(() => "");
-
-        while (readers.some((r) => !r.done)) {
-          await Promise.all(
-            readers.map(async (r, idx) => {
-              if (r.done || !r.reader) return;
-              const { value, done } = await r.reader.read();
-              if (done) { r.done = true; append("ok", `${r.label} Stream beendet`); return; }
-              buffers[idx] += decoder.decode(value, { stream: true });
-              const chunks = buffers[idx].split("\n\n");
-              buffers[idx] = chunks.pop() ?? "";
-              for (const chunk of chunks) {
-                const line = chunk.trim();
-                if (!line.startsWith("data:")) continue;
-                const json = line.slice(5).trim();
-                if (!json) continue;
-                try {
-                  const evt = JSON.parse(json);
-                  // Prefix status messages with source label
-                  if (evt.type === "status") evt.message = `[${r.label}] ${evt.message}`;
-                  handleEvent(evt);
-                } catch {}
-              }
-            }),
-          );
-        }
-      } else {
-        // Einzelner Stream
-      const res = await fetch(endpoints[0], {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: bodyJson,
-        signal: ctrl.signal,
-      });
-      if (!res.ok || !res.body) {
-        const errText = await res.text().catch(() => "");
-        append("err", `HTTP ${res.status}: ${errText.slice(0, 200) || "Keine Antwort"}`);
-        setRunning(false);
-        return;
-      }
-      append("info", "Stream verbunden, warte auf Events…");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-
-        for (const chunk of chunks) {
-          const line = chunk.trim();
-          if (!line.startsWith("data:")) continue;
-          const json = line.slice(5).trim();
-          if (!json) continue;
-          try {
-            const evt = JSON.parse(json);
-            handleEvent(evt);
-          } catch {}
-        }
-      }
-      } // Ende single-stream else
-    } catch (e) {
-      if ((e as Error).name !== "AbortError") {
-        append("err", `Abgebrochen: ${(e as Error).message}`);
-      }
-    } finally {
-      setRunning(false);
-    }
+    const contextSource = source === "euipo" ? "euipo" : "dpma";
+    startScan(endpoints, { nurDE, nurInKraft, klassen: klassenString, zeitraumMonate }, contextSource);
   };
 
-  const handleEvent = (evt: Record<string, unknown>) => {
-    switch (evt.type) {
-      case "status":
-        append("info", evt.message as string);
-        break;
-      case "browser:start":
-        setPhase("browser");
-        append("info", "Chrome wird gestartet…");
-        break;
-      case "browser:loaded":
-        append("ok", `DPMAregister: ${evt.trefferCount} Treffer gefunden`);
-        break;
-      case "browser:done":
-        setPhase("analyze");
-        setKpis((k) => ({ ...k, found: evt.hitCount as number }));
-        setProgress({ current: 0, total: evt.hitCount as number });
-        append("ok", `Browser geschlossen. ${evt.hitCount} Treffer zur Analyse.`);
-        break;
-      case "analyze:start":
-        setProgress({ current: evt.index as number, total: evt.total as number });
-        append("info", `[${evt.index}/${evt.total}] Analysiere: ${evt.markenname}`);
-        break;
-      case "analyze:done":
-        append("ok", `Bewertet: ${evt.markenname} · Score ${evt.score ?? "—"} · ${evt.matchType}`);
-        break;
-      case "hit:new":
-        setKpis((k) => ({ ...k, newHits: k.newHits + 1 }));
-        setNewHits((h) => [
-          { id: evt.id as string, aktenzeichen: evt.aktenzeichen as string, markenname: evt.markenname as string, score: evt.score as number | null, website: evt.website as string | null },
-          ...h,
-        ]);
-        append("ok", `Neu: ${evt.markenname} (${evt.aktenzeichen})${evt.website ? ` → ${evt.website}` : ""}`);
-        break;
-      case "hit:dup":
-        setKpis((k) => ({ ...k, updated: k.updated + 1 }));
-        break;
-      case "error":
-        setKpis((k) => ({ ...k, errors: k.errors + 1 }));
-        append("err", evt.message as string);
-        break;
-      case "done":
-        setPhase("done");
-        setShowSuccess(true);
-        append("ok", `Fertig: ${evt.newTrademarks} neu, ${evt.updated} bekannt, ${evt.errors} Fehler`);
-        setTimeout(() => setShowSuccess(false), 3000);
-        break;
-    }
+  // Derived state — only relevant when this source type is active
+  const isDpmaScan = state.source === "dpma" || state.source === "euipo";
+  const running = state.running && isDpmaScan;
+  const phase = isDpmaScan ? state.phase : "idle";
+  const log = isDpmaScan ? state.log : [];
+  const progress = isDpmaScan ? state.progress : { current: 0, total: 0 };
+  const startedAt = isDpmaScan ? state.startedAt : null;
+  const kpis = {
+    found: isDpmaScan ? state.progress.total : 0,
+    newHits: isDpmaScan ? state.newHits : 0,
+    updated: isDpmaScan ? state.updatedCount : 0,
+    errors: isDpmaScan ? state.errors : 0,
   };
+  const newHits: NewHit[] = isDpmaScan
+    ? state.rawHits.map((h: Record<string, unknown>) => ({
+        id: String(h.id ?? ""),
+        aktenzeichen: String(h.aktenzeichen ?? ""),
+        markenname: String(h.markenname ?? ""),
+        score: (h.score as number | null) ?? null,
+        website: (h.website as string | null) ?? null,
+      }))
+    : [];
 
   const elapsed = startedAt ? now - startedAt : 0;
   const pct = progress.total > 0 ? progress.current / progress.total : 0;
@@ -246,8 +119,8 @@ export function DpmaScanClient() {
         </Link>
       </header>
 
-      {/* Filter */}
-      {!running && (
+      {/* Filter — hide while a register scan is active */}
+      {!isDpmaScan || phase === "idle" ? (
         <section className="glass mb-3 p-5">
           <h2 className="mb-3 text-sm font-semibold text-stone-900">Suchfilter</h2>
 
@@ -386,7 +259,7 @@ export function DpmaScanClient() {
             </div>
           </div>
         </section>
-      )}
+      ) : null}
 
       {/* Start / Status */}
       <section className="glass mb-3 px-5 py-4">
@@ -404,7 +277,7 @@ export function DpmaScanClient() {
             )}
             <div>
               <div className="text-sm font-semibold text-stone-900">
-                {phase === "idle" ? "Bereit" : phase === "browser" ? "Register werden durchsucht" : phase === "analyze" ? "Treffer werden analysiert" : "Suche abgeschlossen"}
+                {phase === "idle" ? "Bereit" : phase === "browser" ? "Register werden durchsucht" : phase === "analyze" ? "Treffer werden analysiert" : phase === "done" ? "Suche abgeschlossen" : "Verbinde…"}
               </div>
               <div className="text-[11px] text-stone-500">
                 {running ? `Verstrichen: ${formatDuration(elapsed)}` : phase === "done" ? `Dauer: ${formatDuration(elapsed)}` : "Durchsucht das DPMA-Markenregister nach konfigurierten Markenstämmen"}
@@ -412,7 +285,7 @@ export function DpmaScanClient() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {progress.total > 0 && (
+            {isDpmaScan && progress.total > 0 && (
               <div className="flex items-center gap-3 text-right">
                 <MiniStat label="Gefunden" value={kpis.found} />
                 <MiniStat label="Neu" value={kpis.newHits} tone="emerald" />
@@ -429,7 +302,7 @@ export function DpmaScanClient() {
               </button>
             ) : (
               <button
-                onClick={() => abortRef.current?.abort()}
+                onClick={stopScan}
                 className="h-10 rounded-full border border-rose-200 bg-rose-50/80 px-6 text-xs font-semibold text-rose-800 hover:bg-rose-100"
               >
                 Abbrechen
@@ -437,7 +310,7 @@ export function DpmaScanClient() {
             )}
           </div>
         </div>
-        {(running || phase === "done") && progress.total > 0 && (
+        {isDpmaScan && (running || phase === "done") && progress.total > 0 && (
           <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-stone-200/70">
             <div
               className={`h-full rounded-full transition-all duration-500 ${
@@ -471,7 +344,7 @@ export function DpmaScanClient() {
       )}
 
       {/* Log + Results */}
-      {(running || log.length > 0) && (
+      {isDpmaScan && (running || log.length > 0) && (
         <section className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           {/* Log */}
           <div className="glass flex min-h-0 flex-col p-4">

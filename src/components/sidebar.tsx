@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { UsageRing } from "./usage-ring";
+import { useScan } from "./scan-context";
 
 const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
   {
@@ -81,6 +82,13 @@ export function Sidebar({
 }) {
   const pathname = usePathname();
   const initial = (userEmail ?? "U").slice(0, 1).toUpperCase();
+  const { state: scan, stopScan } = useScan();
+
+  const scanActive = scan.phase !== "idle";
+  const scanRunning = scan.running;
+  const scanPct = scan.progress.total > 0 ? Math.round((scan.progress.current / scan.progress.total) * 100) : 0;
+  const scanHref = scan.source === "web" ? "/scan" : "/trademarks/scan";
+  const SOURCE_LABEL: Record<string, string> = { web: "Web-Scan", dpma: "DPMA-Suche", euipo: "EUIPO-Suche" };
   return (
     <aside className="glass-sidebar relative z-10 flex h-full w-60 shrink-0 flex-col overflow-visible p-5">
       <div className="mb-8 flex items-center gap-2">
@@ -123,6 +131,56 @@ export function Sidebar({
           );
         })}
       </nav>
+
+      {scanActive && (
+        <div className="mx-1 mt-4">
+          <Link
+            href={scanHref}
+            className="block rounded-xl border border-emerald-200/80 bg-emerald-50/80 px-3 py-2.5 transition hover:bg-emerald-100/80"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                {scanRunning ? (
+                  <span className="relative flex h-2 w-2 shrink-0">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+                  </span>
+                ) : (
+                  <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" />
+                )}
+                <span className="text-xs font-semibold text-emerald-900">
+                  {SOURCE_LABEL[scan.source ?? ""] ?? "Scan"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] text-emerald-700">
+                {scan.newHits > 0 && (
+                  <span className="rounded-full bg-emerald-200/70 px-1.5 py-0.5 font-semibold">
+                    +{scan.newHits}
+                  </span>
+                )}
+                {scanPct > 0 && <span>{scanPct}%</span>}
+              </div>
+            </div>
+            <p className="mt-1 line-clamp-1 text-[10px] text-emerald-700">{scan.lastMessage}</p>
+            {scan.progress.total > 0 && (
+              <div className="mt-2 h-1 overflow-hidden rounded-full bg-emerald-200">
+                <div
+                  className="h-full rounded-full bg-emerald-600 transition-all duration-300"
+                  style={{ width: `${Math.max(2, scanPct)}%` }}
+                />
+              </div>
+            )}
+          </Link>
+          {scanRunning && (
+            <button
+              onClick={stopScan}
+              className="mt-1 w-full rounded-lg px-2 py-1 text-center text-[10px] text-stone-500 hover:bg-white/60 hover:text-rose-700"
+            >
+              Abbrechen
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="mt-auto w-full space-y-3">
         <div className="w-full rounded-xl border border-white/70 bg-white/50 px-3 py-3">

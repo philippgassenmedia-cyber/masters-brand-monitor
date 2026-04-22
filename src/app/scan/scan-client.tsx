@@ -1,17 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useCallback } from "react";
-import { GermanyMap, type ScanCity, type CityState } from "@/components/germany-map";
+import { useEffect, useRef, useState } from "react";
+import { GermanyMap, type ScanCity } from "@/components/germany-map";
+import { useScan } from "@/components/scan-context";
 
 type SearchRegion = "deutschland" | "hessen" | "dach" | "eu" | "welt";
 type ScanMode = "quick" | "deep";
-
-interface LogLine {
-  ts: number;
-  tone: "info" | "ok" | "warn" | "err";
-  text: string;
-}
 
 interface NewHit {
   id: string;
@@ -29,7 +24,6 @@ const REGIONS: { value: SearchRegion; label: string }[] = [
   { value: "welt", label: "Weltweit" },
 ];
 
-// Major German cities for the map visualization
 const SCAN_CITIES: ScanCity[] = [
   { name: "Frankfurt", lat: 50.11, lng: 8.68 },
   { name: "Berlin", lat: 52.52, lng: 13.41 },
@@ -58,162 +52,69 @@ function formatDuration(ms: number): string {
 }
 
 export function ScanClient() {
+  const { state, startScan, stopScan } = useScan();
+
+  // Local UI state only
   const [region, setRegion] = useState<SearchRegion>("deutschland");
   const [mode, setMode] = useState<ScanMode>("quick");
   const [freeText, setFreeText] = useState("");
-  const [running, setRunning] = useState(false);
-  const [log, setLog] = useState<LogLine[]>([]);
-  const [phase, setPhase] = useState<string>("idle");
-  const [progress, setProgress] = useState({ current: 0, total: 0 });
-  const [kpis, setKpis] = useState({ queries: 0, raw: 0, newHits: 0, updated: 0, errors: 0 });
-  const [newHits, setNewHits] = useState<NewHit[]>([]);
-  const [startedAt, setStartedAt] = useState<number | null>(null);
   const [now, setNow] = useState(Date.now());
   const [showSuccess, setShowSuccess] = useState(false);
-  const [cityStates, setCityStates] = useState<Record<string, CityState>>({});
-  const [hitCounts, setHitCounts] = useState<Record<string, number>>({});
 
   const logEndRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const prevPhaseRef = useRef<string>(state.phase);
 
+  // Timer tick
   useEffect(() => {
-    if (!running) return;
+    if (!state.running) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [running]);
+  }, [state.running]);
 
+  // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [log]);
+  }, [state.log]);
 
-  const append = useCallback(
-    (tone: LogLine["tone"], text: string) =>
-      setLog((l) => [...l.slice(-300), { ts: Date.now(), tone, text }]),
-    [],
-  );
-
-  const start = async () => {
-    setRunning(true);
-    setLog([]);
-    setPhase("searching");
-    setProgress({ current: 0, total: 0 });
-    setKpis({ queries: 0, raw: 0, newHits: 0, updated: 0, errors: 0 });
-    setNewHits([]);
-    setShowSuccess(false);
-    setCityStates({});
-    setHitCounts({});
-    const t0 = Date.now();
-    setStartedAt(t0);
-    setNow(t0);
-
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-
-    try {
-      const res = await fetch("/api/scan/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ region, mode, freeText: freeText || undefined }),
-        signal: ctrl.signal,
-      });
-
-      if (!res.ok || !res.body) {
-        const errText = await res.text().catch(() => "");
-        append("err", `HTTP ${res.status}: ${errText.slice(0, 200) || "Keine Antwort"}`);
-        setRunning(false);
-        return;
-      }
-
-      append("info", "Stream verbunden, warte auf Events…");
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split("\n\n");
-        buffer = chunks.pop() ?? "";
-
-        for (const chunk of chunks) {
-          const line = chunk.trim();
-          if (!line.startsWith("data:")) continue;
-          const json = line.slice(5).trim();
-          if (!json) continue;
-          try {
-            handleEvent(JSON.parse(json));
-          } catch {
-            // invalid JSON, skip
-          }
-        }
-      }
-    } catch (e) {
-      if ((e as Error).name !== "AbortError") {
-        append("err", `Fehler: ${(e as Error).message}`);
-      }
-    } finally {
-      setRunning(false);
+  // Success overlay when scan finishes while on this page
+  useEffect(() => {
+    if (state.source !== "web") return;
+    if (prevPhaseRef.current !== "done" && state.phase === "done") {
+      setShowSuccess(true);
+      const t = setTimeout(() => setShowSuccess(false), 3000);
+      return () => clearTimeout(t);
     }
+    prevPhaseRef.current = state.phase;
+  }, [state.phase, state.source]);
+
+  // Derived state from context — only relevant when this source is active
+  const isWebScan = state.source === "web";
+  const running = state.running && isWebScan;
+  const phase = isWebScan ? state.phase : "idle";
+  const log = isWebScan ? state.log : [];
+  const progress = isWebScan ? state.progress : { current: 0, total: 0 };
+  const startedAt = isWebScan ? state.startedAt : null;
+  const cityStates = isWebScan ? state.cityStates : {};
+  const hitCounts = isWebScan ? state.hitCounts : {};
+  const kpis = {
+    queries: isWebScan ? state.queriesCount : 0,
+    raw: isWebScan ? state.rawCount : 0,
+    newHits: isWebScan ? state.newHits : 0,
+    updated: isWebScan ? state.updatedCount : 0,
+    errors: isWebScan ? state.errors : 0,
   };
+  const newHits: NewHit[] = isWebScan
+    ? state.rawHits.map((h: Record<string, unknown>) => ({
+        id: String(h.id ?? ""),
+        domain: String(h.domain ?? ""),
+        score: (h.score as number | null) ?? null,
+        company: (h.company as string | null) ?? null,
+        url: String(h.url ?? ""),
+      }))
+    : [];
 
-  const handleEvent = (evt: Record<string, unknown>) => {
-    switch (evt.type) {
-      case "status":
-        append("info", evt.message as string);
-        break;
-      case "query:start":
-        setKpis((k) => ({ ...k, queries: k.queries + 1 }));
-        setProgress({ current: evt.index as number, total: evt.total as number });
-        append("info", `[${evt.index}/${evt.total}] ${evt.query}`);
-        if (evt.city) {
-          setCityStates((s) => ({ ...s, [evt.city as string]: "active" }));
-        }
-        break;
-      case "query:done":
-        if (evt.city) {
-          setCityStates((s) => ({ ...s, [evt.city as string]: "done" }));
-        }
-        setKpis((k) => ({ ...k, raw: k.raw + (evt.resultCount as number ?? 0) }));
-        append("ok", `${evt.resultCount} Ergebnisse`);
-        break;
-      case "hit:new":
-        setKpis((k) => ({ ...k, newHits: k.newHits + 1 }));
-        setNewHits((h) => [
-          {
-            id: evt.id as string,
-            domain: evt.domain as string,
-            score: evt.score as number | null,
-            company: (evt.company as string) ?? null,
-            url: evt.url as string,
-          },
-          ...h,
-        ]);
-        if (evt.city) {
-          setHitCounts((c) => ({
-            ...c,
-            [evt.city as string]: (c[evt.city as string] ?? 0) + 1,
-          }));
-        }
-        append("ok", `Neu: ${evt.domain} (Score ${evt.score ?? "—"})`);
-        break;
-      case "hit:update":
-        setKpis((k) => ({ ...k, updated: k.updated + 1 }));
-        break;
-      case "error":
-        setKpis((k) => ({ ...k, errors: k.errors + 1 }));
-        append("err", evt.message as string);
-        break;
-      case "done":
-        setPhase("done");
-        setShowSuccess(true);
-        append(
-          "ok",
-          `Fertig: ${evt.newHits} neu, ${evt.updated} aktualisiert, ${evt.errors} Fehler`,
-        );
-        setTimeout(() => setShowSuccess(false), 3000);
-        break;
-    }
+  const start = () => {
+    startScan(["/api/scan/stream"], { region, mode, freeText: freeText || undefined }, "web");
   };
 
   const elapsed = startedAt ? now - startedAt : 0;
@@ -228,8 +129,8 @@ export function ScanClient() {
         </Link>
       </header>
 
-      {/* Controls */}
-      {!running && (
+      {/* Controls — hide while a web scan is active */}
+      {!isWebScan || phase === "idle" ? (
         <section className="glass mb-3 p-5">
           <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
             <div className="grid gap-3 sm:grid-cols-3">
@@ -309,7 +210,7 @@ export function ScanClient() {
             </div>
           </div>
         </section>
-      )}
+      ) : null}
 
       {/* Status bar */}
       <section className="glass mb-3 px-5 py-4">
@@ -329,9 +230,11 @@ export function ScanClient() {
               <div className="text-sm font-semibold text-stone-900">
                 {phase === "idle"
                   ? "Bereit"
-                  : phase === "searching"
+                  : phase === "searching" || phase === "running"
                     ? "Suche läuft"
-                    : "Scan abgeschlossen"}
+                    : phase === "done"
+                      ? "Scan abgeschlossen"
+                      : "Verbinde…"}
               </div>
               <div className="text-[11px] text-stone-500">
                 {running
@@ -343,7 +246,7 @@ export function ScanClient() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {(running || phase === "done") && (
+            {(running || phase === "done") && isWebScan && (
               <div className="flex items-center gap-3 text-right">
                 <MiniStat label="Abfragen" value={kpis.queries} />
                 <MiniStat label="Roh" value={kpis.raw} />
@@ -361,7 +264,7 @@ export function ScanClient() {
               </button>
             ) : (
               <button
-                onClick={() => abortRef.current?.abort()}
+                onClick={stopScan}
                 className="h-10 rounded-full border border-rose-200 bg-rose-50/80 px-6 text-xs font-semibold text-rose-800 hover:bg-rose-100"
               >
                 Abbrechen
@@ -369,7 +272,7 @@ export function ScanClient() {
             )}
           </div>
         </div>
-        {(running || phase === "done") && progress.total > 0 && (
+        {(running || phase === "done") && isWebScan && progress.total > 0 && (
           <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-stone-200/70">
             <div
               className={`h-full rounded-full transition-all duration-500 ${
@@ -420,7 +323,7 @@ export function ScanClient() {
       )}
 
       {/* Map + Log + Results */}
-      {(running || log.length > 0) && (
+      {isWebScan && (running || log.length > 0) && (
         <section className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[240px_minmax(0,1fr)_minmax(0,1fr)]">
           {/* Germany Map */}
           <div className="glass flex items-center justify-center p-3">

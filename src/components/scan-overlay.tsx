@@ -17,7 +17,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export function ScanOverlay() {
-  const { state, stopScan } = useScan();
+  const { state, stopScan, clearScan } = useScan();
   const [expanded, setExpanded] = useState(false);
 
   // Nichts anzeigen wenn idle
@@ -140,13 +140,7 @@ export function ScanOverlay() {
             )}
             {isDone && (
               <button
-                onClick={() => {
-                  setExpanded(false);
-                  // Reset nach Schließen
-                  setTimeout(() => {
-                    // state wird nicht zurückgesetzt, overlay verschwindet beim nächsten idle
-                  }, 300);
-                }}
+                onClick={() => { setExpanded(false); clearScan(); }}
                 className="rounded-full border border-stone-200 px-3 py-1.5 text-[10px] font-semibold text-stone-600 hover:bg-stone-100"
               >
                 Schließen
