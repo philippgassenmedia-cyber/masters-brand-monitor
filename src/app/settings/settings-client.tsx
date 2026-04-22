@@ -780,6 +780,7 @@ function DpmaAgentSection() {
   const [config, setConfig] = useState<{ NEXT_PUBLIC_SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string; GEMINI_API_KEY: string } | null>(null);
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
+  const [downloaded, setDownloaded] = useState(false);
 
   const loadConfig = async () => {
     setConfigLoading(true);
@@ -801,43 +802,163 @@ function DpmaAgentSection() {
     if (!open && !config) loadConfig();
   };
 
-  // Startbefehl mit eingebetteten Keys — kein .env nötig
-  const envInline = config ? {
-    windows: `$env:SUPABASE_URL="${config.NEXT_PUBLIC_SUPABASE_URL}"; $env:SUPABASE_SERVICE_ROLE_KEY="${config.SUPABASE_SERVICE_ROLE_KEY}"; $env:GEMINI_API_KEY="${config.GEMINI_API_KEY}"; `,
-    mac: `SUPABASE_URL="${config.NEXT_PUBLIC_SUPABASE_URL}" SUPABASE_SERVICE_ROLE_KEY="${config.SUPABASE_SERVICE_ROLE_KEY}" GEMINI_API_KEY="${config.GEMINI_API_KEY}" `,
-  } : null;
+  // Generiert eine ausführbare Datei die man einfach doppelklickt
+  const downloadScript = () => {
+    if (!config) return;
+    const { NEXT_PUBLIC_SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey, GEMINI_API_KEY: gemKey } = config;
+    const repo = "https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git";
 
-  const installCmd = {
-    windows: `mkdir C:\\dpma-agent -Force; cd C:\\dpma-agent; git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . 2>$null; npm install`,
-    mac: `mkdir -p ~/dpma-agent && cd ~/dpma-agent && git clone https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git . 2>/dev/null; npm install`,
+    let content: string;
+    let filename: string;
+    let mimeType: string;
+
+    if (os === "windows") {
+      filename = "DPMA-Agent-Starten.bat";
+      mimeType = "application/bat";
+      content = `@echo off
+chcp 65001 >nul
+title DPMA Register-Agent
+echo.
+echo ========================================
+echo   DPMA Register-Agent
+echo ========================================
+echo.
+
+:: Prüfe ob Node.js installiert ist
+where node >nul 2>&1
+if %errorlevel% neq 0 (
+  echo [FEHLER] Node.js ist nicht installiert.
+  echo Bitte installiere Node.js von https://nodejs.org
+  echo.
+  pause
+  exit /b 1
+)
+
+:: Prüfe ob Git installiert ist
+where git >nul 2>&1
+if %errorlevel% neq 0 (
+  echo [FEHLER] Git ist nicht installiert.
+  echo Bitte installiere Git von https://git-scm.com/download/win
+  echo.
+  pause
+  exit /b 1
+)
+
+:: Projekt-Ordner erstellen falls nötig
+if not exist "C:\\dpma-agent\\package.json" (
+  echo [1/3] Projekt wird heruntergeladen...
+  mkdir "C:\\dpma-agent" 2>nul
+  cd /d "C:\\dpma-agent"
+  git clone ${repo} . 2>nul
+  if %errorlevel% neq 0 (
+    echo Projekt existiert bereits, aktualisiere...
+    git pull 2>nul
+  )
+  echo [2/3] Abhaengigkeiten werden installiert...
+  call npm install
+) else (
+  cd /d "C:\\dpma-agent"
+  echo Projekt gefunden. Aktualisiere...
+  git pull 2>nul
+  call npm install --silent
+)
+
+echo [3/3] Agent wird gestartet...
+echo.
+echo Der Agent wartet jetzt auf Scan-Auftraege.
+echo Dieses Fenster offen lassen!
+echo Zum Stoppen: Strg+C oder Fenster schliessen.
+echo.
+
+set SUPABASE_URL=${sbUrl}
+set SUPABASE_SERVICE_ROLE_KEY=${sbKey}
+set GEMINI_API_KEY=${gemKey}
+npx tsx scripts/dpma-agent.ts
+
+pause
+`;
+    } else {
+      filename = "DPMA-Agent-Starten.command";
+      mimeType = "application/x-sh";
+      content = `#!/bin/bash
+# DPMA Register-Agent — Doppelklick zum Starten
+
+echo ""
+echo "========================================"
+echo "  DPMA Register-Agent"
+echo "========================================"
+echo ""
+
+# Prüfe Node.js
+if ! command -v node &> /dev/null; then
+  echo "[FEHLER] Node.js ist nicht installiert."
+  echo "Bitte installiere Node.js von https://nodejs.org"
+  echo ""
+  read -p "Drücke Enter zum Schließen..."
+  exit 1
+fi
+
+# Prüfe Git
+if ! command -v git &> /dev/null; then
+  echo "[FEHLER] Git ist nicht installiert."
+  echo "Installiere Xcode Command Line Tools: xcode-select --install"
+  echo ""
+  read -p "Drücke Enter zum Schließen..."
+  exit 1
+fi
+
+# Projekt herunterladen oder aktualisieren
+AGENT_DIR="$HOME/dpma-agent"
+if [ ! -f "$AGENT_DIR/package.json" ]; then
+  echo "[1/3] Projekt wird heruntergeladen..."
+  mkdir -p "$AGENT_DIR"
+  cd "$AGENT_DIR"
+  git clone ${repo} . 2>/dev/null || git pull 2>/dev/null
+  echo "[2/3] Abhängigkeiten werden installiert..."
+  npm install
+else
+  cd "$AGENT_DIR"
+  echo "Projekt gefunden. Aktualisiere..."
+  git pull 2>/dev/null
+  npm install --silent
+fi
+
+echo "[3/3] Agent wird gestartet..."
+echo ""
+echo "Der Agent wartet jetzt auf Scan-Aufträge."
+echo "Dieses Fenster offen lassen!"
+echo "Zum Stoppen: Ctrl+C oder Fenster schließen."
+echo ""
+
+export SUPABASE_URL="${sbUrl}"
+export SUPABASE_SERVICE_ROLE_KEY="${sbKey}"
+export GEMINI_API_KEY="${gemKey}"
+npx tsx scripts/dpma-agent.ts
+`;
+    }
+
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+    setDownloaded(true);
+    setTimeout(() => setDownloaded(false), 3000);
   };
 
-  const startCmd = {
-    windows: `cd C:\\dpma-agent; ${envInline?.windows ?? ""}npm run scan:agent`,
-    mac: `cd ~/dpma-agent && ${envInline?.mac ?? ""}npm run scan:agent`,
+  const prereqs = {
+    windows: [
+      { name: "Google Chrome", url: "https://www.google.com/chrome/" },
+      { name: "Node.js (LTS)", url: "https://nodejs.org", hint: "Installer ausführen" },
+      { name: "Git", url: "https://git-scm.com/download/win", hint: "Installer ausführen" },
+    ],
+    mac: [
+      { name: "Google Chrome", url: "https://www.google.com/chrome/" },
+      { name: "Node.js (LTS)", url: "https://nodejs.org", hint: "Installer ausführen" },
+    ],
   };
-
-  const steps = {
-    windows: {
-      prereqs: [
-        { name: "Google Chrome", url: "https://www.google.com/chrome/" },
-        { name: "Node.js (LTS)", url: "https://nodejs.org", hint: "Installer herunterladen und ausführen" },
-        { name: "Git", url: "https://git-scm.com/download/win", hint: "Installer mit Standard-Einstellungen" },
-      ],
-      openTerminal: <>Drücke <kbd className="rounded border border-stone-300 bg-stone-100 px-1.5 py-0.5 text-[10px] font-semibold">Win + X</kbd> → <strong>Terminal</strong> oder <strong>PowerShell</strong></>,
-      stopKey: "Strg+C",
-    },
-    mac: {
-      prereqs: [
-        { name: "Google Chrome", url: "https://www.google.com/chrome/" },
-        { name: "Node.js (LTS)", url: "https://nodejs.org", hint: "Installer herunterladen und ausführen" },
-      ],
-      openTerminal: <>Öffne <strong>Spotlight</strong> (Cmd + Leertaste) → tippe <strong>Terminal</strong> → Enter</>,
-      stopKey: "Ctrl+C",
-    },
-  };
-
-  const s = steps[os];
 
   return (
     <section className="glass mt-6 p-6">
@@ -861,76 +982,22 @@ function DpmaAgentSection() {
         <div className="mt-5 space-y-5">
           {/* OS Switch */}
           <div className="flex items-center gap-1 rounded-full bg-stone-100 p-1 w-fit">
-            <button
-              onClick={() => setOs("windows")}
-              className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition ${os === "windows" ? "bg-stone-900 text-white shadow-sm" : "text-stone-500 hover:text-stone-800"}`}
-            >
+            <button onClick={() => setOs("windows")} className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition ${os === "windows" ? "bg-stone-900 text-white shadow-sm" : "text-stone-500 hover:text-stone-800"}`}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/></svg>
               Windows
             </button>
-            <button
-              onClick={() => setOs("mac")}
-              className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition ${os === "mac" ? "bg-stone-900 text-white shadow-sm" : "text-stone-500 hover:text-stone-800"}`}
-            >
+            <button onClick={() => setOs("mac")} className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold transition ${os === "mac" ? "bg-stone-900 text-white shadow-sm" : "text-stone-500 hover:text-stone-800"}`}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
               macOS
             </button>
           </div>
 
-          {/* Schritt 1: Installation */}
-          <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
-            <div className="mb-1 text-sm font-semibold text-stone-900">Schritt 1 — Einmalig installieren</div>
-            <p className="mb-2 text-xs text-stone-600">
-              {s.openTerminal}. Dann diesen Befehl einfügen:
-            </p>
-            <CodeBlock text={installCmd[os]} />
-          </div>
-
-          {/* Schritt 2: Agent starten */}
-          <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-4">
-            <div className="mb-1 text-sm font-semibold text-emerald-900">Schritt 2 — Agent starten</div>
-            <p className="mb-2 text-xs text-stone-600">
-              Diesen Befehl jedes Mal ausführen wenn der Agent gestartet werden soll.
-              Die Zugangsdaten sind bereits enthalten — keine Konfigurationsdatei nötig.
-            </p>
-            {configLoading && (
-              <div className="flex items-center gap-2 rounded-lg bg-stone-100 px-3 py-2 text-xs text-stone-500">
-                <div className="h-4 w-4 animate-spin rounded-full border-2 border-stone-300 border-t-stone-700" />
-                Lade Startbefehl…
-              </div>
-            )}
-            {configError && (
-              <div className="rounded-lg border border-rose-200 bg-rose-50/80 px-3 py-2 text-xs text-rose-800">
-                {configError}
-                <button onClick={loadConfig} className="ml-2 font-semibold underline">Erneut versuchen</button>
-              </div>
-            )}
-            {config && (
-              <>
-                <CodeBlock text={startCmd[os]} />
-                <p className="mt-2 text-[11px] text-stone-500">
-                  Fenster offen lassen. Zum Stoppen: <kbd className="rounded border border-stone-300 bg-stone-100 px-1 py-0.5 text-[10px] font-semibold">{s.stopKey}</kbd>
-                </p>
-              </>
-            )}
-          </div>
-
-          {/* Schritt 3: Scan starten */}
-          <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
-            <div className="mb-1 text-sm font-semibold text-stone-900">Schritt 3 — Scan starten</div>
-            <p className="text-xs text-stone-600">
-              Weiter unten auf dieser Seite unter <strong>Geplante Scans</strong>: Typ <strong>DPMA</strong> wählen → <strong>Planen</strong> → <strong>Jetzt</strong>.
-              Der Agent führt den Scan automatisch aus.
-            </p>
-          </div>
-
           {/* Voraussetzungen */}
-          <details className="group">
-            <summary className="cursor-pointer text-xs font-semibold text-stone-600 hover:text-stone-900">
-              Voraussetzungen anzeigen
-            </summary>
-            <div className="mt-3 space-y-1.5">
-              {s.prereqs.map((p) => (
+          <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
+            <div className="mb-2 text-sm font-semibold text-stone-900">Voraussetzungen</div>
+            <p className="mb-3 text-xs text-stone-600">Folgende Programme müssen einmalig installiert werden:</p>
+            <div className="space-y-1.5">
+              {prereqs[os].map((p) => (
                 <a key={p.name} href={p.url} target="_blank" rel="noopener"
                   className="flex items-center gap-2 rounded-lg border border-white/70 bg-white/50 px-3 py-2 text-xs hover:bg-white/80 transition">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-stone-400">
@@ -941,7 +1008,57 @@ function DpmaAgentSection() {
                 </a>
               ))}
             </div>
-          </details>
+          </div>
+
+          {/* Download */}
+          <div className="rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-5">
+            <div className="mb-1 text-sm font-semibold text-emerald-900">Agent herunterladen</div>
+            <p className="mb-4 text-xs text-stone-600">
+              Lade die Startdatei herunter und <strong>doppelklicke</strong> sie.
+              Der Agent installiert sich automatisch und wartet auf Scan-Aufträge von dieser Webseite.
+              {os === "mac" && <><br />Beim ersten Mal: Rechtsklick → &quot;Öffnen&quot; (macOS Sicherheitsabfrage).</>}
+            </p>
+
+            {configLoading && (
+              <div className="flex items-center gap-2 text-xs text-stone-500">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-stone-300 border-t-stone-700" />
+                Wird vorbereitet…
+              </div>
+            )}
+            {configError && (
+              <div className="rounded-lg border border-rose-200 bg-rose-50/80 px-3 py-2 text-xs text-rose-800">
+                {configError}
+                <button onClick={loadConfig} className="ml-2 font-semibold underline">Erneut versuchen</button>
+              </div>
+            )}
+            {config && (
+              <button
+                onClick={downloadScript}
+                className="flex items-center gap-2 rounded-full bg-stone-900 px-6 py-2.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] hover:bg-stone-800 transition"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                {downloaded
+                  ? "Heruntergeladen!"
+                  : os === "windows"
+                    ? "DPMA-Agent-Starten.bat herunterladen"
+                    : "DPMA-Agent-Starten.command herunterladen"
+                }
+              </button>
+            )}
+          </div>
+
+          {/* Nutzung */}
+          <div className="rounded-xl border border-stone-200/60 bg-white/40 p-4">
+            <div className="mb-1 text-sm font-semibold text-stone-900">Scan starten</div>
+            <p className="text-xs text-stone-600">
+              Sobald der Agent läuft, kannst du auf der{" "}
+              <a href="/trademarks" className="font-semibold underline">DPMA-Register Seite</a>{" "}
+              oder hier unter <strong>Geplante Scans</strong> einen DPMA-Scan starten.
+              Der Agent führt ihn automatisch aus.
+            </p>
+          </div>
 
           <div className="rounded-xl border border-amber-200/60 bg-amber-50/50 p-3 text-xs text-stone-700">
             <strong>Warum lokal?</strong> Das DPMA-Register blockiert Cloud-Zugriffe.
