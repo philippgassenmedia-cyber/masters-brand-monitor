@@ -5,20 +5,18 @@ const IS_SERVERLESS = !!process.env.VERCEL || !!process.env.AWS_LAMBDA_FUNCTION_
 
 export async function launchBrowser(): Promise<Browser> {
   if (IS_SERVERLESS) {
-    // Vercel/Lambda: nutze gebündeltes Chromium das direkt auf dem Server läuft
-    const sparticuz = await import("@sparticuz/chromium");
-    const executablePath = await sparticuz.default.executablePath();
-    return chromium.launch({
-      executablePath,
-      headless: true,
-      args: [
-        ...sparticuz.default.args,
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-      ],
-    });
+    // Serverless: DPMA hat F5 Bot-Protection, @sparticuz/chromium wird erkannt.
+    // Stattdessen verbinden wir uns per WebSocket zu Browserless.io (Cloud-Chrome).
+    const token = process.env.BROWSERLESS_TOKEN;
+    if (!token) {
+      throw new Error(
+        "BROWSERLESS_TOKEN nicht gesetzt. " +
+        "Registriere dich gratis auf https://browserless.io und setze den API-Token in Vercel."
+      );
+    }
+    // Browserless Playwright-Endpoint
+    const wsUrl = `wss://production-sfo.browserless.io/playwright?token=${token}`;
+    return chromium.connect(wsUrl);
   }
 
   // Lokal: System-Chrome nutzen
