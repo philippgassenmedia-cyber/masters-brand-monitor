@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useTransition } from "react";
 import { NIZZA_BESCHREIBUNG, IMMOBILIEN_KLASSEN } from "@/lib/dpma/nizza-klassen";
 import { useScan } from "@/components/scan-context";
 
@@ -24,6 +24,7 @@ type ScanSource = "dpma" | "euipo" | "both";
 
 export function DpmaScanClient() {
   const { state, startScan, stopScan } = useScan();
+  const [pending, startTransition] = useTransition();
 
   // Local UI state only — filter inputs + UI toggles
   const [source, setSource] = useState<ScanSource>("dpma");
@@ -73,15 +74,39 @@ export function DpmaScanClient() {
     prevPhaseRef.current = state.phase;
   }, [state.phase, state.source]);
 
+  const [agentMsg, setAgentMsg] = useState<string | null>(null);
+
   const start = () => {
-    const endpoints =
-      source === "both"
-        ? ["/api/dpma/search/stream", "/api/euipo/search/stream"]
-        : source === "euipo"
-          ? ["/api/euipo/search/stream"]
-          : ["/api/dpma/search/stream"];
-    const contextSource = source === "euipo" ? "euipo" : "dpma";
-    startScan(endpoints, { nurDE, nurInKraft, klassen: klassenString, zeitraumMonate }, contextSource);
+    // DPMA-Scan wird über den lokalen Agent ausgeführt:
+    // Erstellt einen scheduled_scan Eintrag den der Agent aufnimmt
+    setAgentMsg(null);
+    startTransition(async () => {
+      try {
+        const res = await fetch("/api/scheduled-scans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scheduled_at: new Date().toISOString(),
+            scan_type: source === "euipo" ? "dpma" : source === "both" ? "dpma" : "dpma",
+            notes: `Register-Suche: ${source.toUpperCase()}, Klassen ${klassenString}`,
+          }),
+        });
+        if (!res.ok) throw new Error("Scan konnte nicht erstellt werden");
+        // Sofort triggern
+        const scanData = await fetch("/api/scheduled-scans").then(r => r.json());
+        const pending = (scanData.scans ?? []).find((s: { status: string }) => s.status === "pending");
+        if (pending) {
+          await fetch("/api/scheduled-scans", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trigger_id: pending.id }),
+          });
+        }
+        setAgentMsg("Scan-Auftrag erstellt. Der lokale Agent nimmt ihn auf, sobald er läuft. Ergebnisse erscheinen automatisch.");
+      } catch (e) {
+        setAgentMsg(`Fehler: ${(e as Error).message}`);
+      }
+    });
   };
 
   // Derived state — only relevant when this source type is active
@@ -321,6 +346,23 @@ export function DpmaScanClient() {
           </div>
         )}
       </section>
+
+      {/* Agent-Meldung */}
+      {agentMsg && (
+        <div className={`mb-3 rounded-2xl px-5 py-3 text-sm ${
+          agentMsg.startsWith("Fehler")
+            ? "border border-rose-200 bg-rose-50/80 text-rose-800"
+            : "border border-emerald-200 bg-emerald-50/80 text-emerald-800"
+        }`}>
+          <div className="font-semibold">{agentMsg.startsWith("Fehler") ? "Fehler" : "Scan-Auftrag gesendet"}</div>
+          <p className="mt-1 text-xs">{agentMsg}</p>
+          {!agentMsg.startsWith("Fehler") && (
+            <p className="mt-2 text-xs text-stone-600">
+              Agent nicht eingerichtet? → <a href="/settings" className="font-semibold underline">Einstellungen → DPMA Register-Agent</a>
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Success Overlay */}
       {showSuccess && (

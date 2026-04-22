@@ -61,18 +61,32 @@ export function TrademarksClient({
   const visible = showAll ? trademarks : trademarks.slice(0, INITIAL_VISIBLE);
   const hasMore = trademarks.length > INITIAL_VISIBLE;
 
-  const triggerMailFetch = () => {
+  const triggerDpmaScan = () => {
     setScanMsg(null);
     startTransition(async () => {
-      const res = await fetch("/api/dpma/run", { method: "POST" });
-      const data = await res.json();
-      if (data.ok) {
-        const r = data.result;
-        setScanMsg(
-          `Mail-Abruf fertig: ${r.totalEmails} Mails, ${r.newTrademarks} neue Treffer, ${r.errors?.length ?? 0} Fehler`,
-        );
-      } else {
-        setScanMsg(`Fehler: ${data.error}`);
+      try {
+        // Scheduled Scan erstellen + sofort triggern
+        await fetch("/api/scheduled-scans", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            scheduled_at: new Date().toISOString(),
+            scan_type: "dpma",
+            notes: "Manuell gestartet",
+          }),
+        });
+        const scanData = await fetch("/api/scheduled-scans").then(r => r.json());
+        const pendingScan = (scanData.scans ?? []).find((s: { status: string }) => s.status === "pending");
+        if (pendingScan) {
+          await fetch("/api/scheduled-scans", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ trigger_id: pendingScan.id }),
+          });
+        }
+        setScanMsg("DPMA-Scan gestartet. Der lokale Agent nimmt den Auftrag auf. Ergebnisse erscheinen hier automatisch.");
+      } catch (e) {
+        setScanMsg(`Fehler: ${(e as Error).message}`);
       }
       router.refresh();
     });
@@ -96,11 +110,11 @@ export function TrademarksClient({
             Register-Suche (DPMA + EUIPO) →
           </Link>
           <button
-            onClick={triggerMailFetch}
+            onClick={triggerDpmaScan}
             disabled={pending}
             className="h-10 rounded-full border border-white/80 bg-white/60 px-5 text-xs font-semibold text-stone-700 hover:bg-white/90 disabled:opacity-60"
           >
-            Mails abrufen
+            {pending ? "Wird gestartet…" : "DPMA Scan starten"}
           </button>
           <Link
             href="/settings/dpma"
