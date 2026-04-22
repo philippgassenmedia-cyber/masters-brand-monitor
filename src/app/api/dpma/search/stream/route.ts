@@ -19,26 +19,28 @@ export async function POST(req: Request) {
   const stems = (stemsData ?? []).map((s) => s.stamm as string);
   if (!stems.length) stems.push("master");
 
-  const nurDE = body.nurDE !== false;
-  const nurInKraft = body.nurInKraft !== false;
-  const klassen = typeof body.klassen === "string" ? body.klassen : "36 37 42";
-  const zeitraumMonate = typeof body.zeitraumMonate === "number" ? body.zeitraumMonate : 3;
+  const options = {
+    nurDE:          body.nurDE !== false,
+    nurInKraft:     body.nurInKraft !== false,
+    klassen:        typeof body.klassen === "string" ? body.klassen : "36 37 42",
+    zeitraumMonate: typeof body.zeitraumMonate === "number" ? body.zeitraumMonate : 0,
+  };
 
   const encoder = new TextEncoder();
+
   const stream = new ReadableStream({
     async start(controller) {
       const write = (obj: unknown) => {
         try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`)); } catch {}
       };
       controller.enqueue(encoder.encode(": " + " ".repeat(2048) + "\n\n"));
-      write({ type: "status", message: "Initialisiere DPMA-Suche…" });
 
       const heartbeat = setInterval(() => {
         try { controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`)); } catch {}
       }, 2000);
 
       try {
-        for await (const evt of runDpmaSearchStream(stems, { nurDE, nurInKraft, klassen, zeitraumMonate })) {
+        for await (const evt of runDpmaSearchStream(stems, options)) {
           write(evt);
         }
       } catch (e) {
