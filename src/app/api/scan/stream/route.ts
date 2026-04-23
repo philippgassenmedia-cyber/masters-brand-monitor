@@ -240,7 +240,6 @@ export async function POST(req: Request) {
                     social_links: profile?.social_links ?? null,
                     impressum_raw: profile?.raw ?? null,
                     status: "new",
-                    scan_run_id: runId,
                   })
                   .select("id")
                   .single();

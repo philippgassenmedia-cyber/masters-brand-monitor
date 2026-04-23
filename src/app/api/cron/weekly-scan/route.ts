@@ -146,7 +146,6 @@ async function runDeepScan(): Promise<{
               email: profile?.email,
               phone: profile?.phone,
               status: "new",
-              scan_run_id: runId,
             });
             newHits++;
           } catch {
