@@ -14,37 +14,43 @@ function verifyCronSecret(req: Request): boolean {
 }
 
 const DEEP_QUERIES = [
-  // Immobilien
+  // ── Immobilien (Primär-Fokus) ──────────────────────────────────────────────
   `"${BRAND_NAME}" Immobilien Makler`,
-  `"${BRAND_NAME}" Hausverwaltung`,
   `"${BRAND_NAME}" Immobilien GmbH`,
+  `"${BRAND_NAME}" Hausverwaltung`,
+  `"${BRAND_NAME}" Immobilienvermittlung`,
   `"${BRAND_NAME}" Immobilien Projektentwicklung`,
-  `"${BRAND_NAME}" Property Management`,
-  `"${BRAND_NAME}" Real Estate`,
   `"${BRAND_NAME}" Bauträger`,
-  `"${BRAND_NAME}" Immobilien Vermietung`,
+  `"${BRAND_NAME}" Real Estate`,
+  `"${BRAND_NAME}" Property Management`,
+  `"${BRAND_NAME}" Wohnungsvermittlung`,
+  `"${BRAND_NAME}" Gewerbeimmobilien`,
   `"${BRAND_NAME}" Immobilien Verwaltung`,
-  // Unternehmensberatung
-  `"${BRAND_NAME}" Unternehmensberatung`,
-  `"${BRAND_NAME}" Beratung GmbH`,
-  `"${BRAND_NAME}" Consulting`,
-  `"${BRAND_NAME}" Management Beratung`,
-  `"${BRAND_NAME}" Business Consulting`,
-  // Überschneidungsfelder
+  `"${BRAND_NAME}" Mietverwaltung`,
   `"${BRAND_NAME}" Immobilienberatung`,
-  `"${BRAND_NAME}" Investment`,
+  `"${BRAND_NAME}" Wohnimmobilien`,
+  `"${BRAND_NAME}" Neubau Immobilien`,
+  `"${BRAND_NAME}" Gewerbemakler`,
+  `"${BRAND_NAME}" Immobilien Vermietung`,
+  `"${BRAND_NAME}" Investment Immobilien`,
+  // ── Beratung / Consulting (Sekundär) ──────────────────────────────────────
+  `"${BRAND_NAME}" Unternehmensberatung`,
+  `"${BRAND_NAME}" Consulting`,
+  `"${BRAND_NAME}" Beratung GmbH`,
   `"${BRAND_NAME}" Facility Management`,
   `"${BRAND_NAME}" Vermögensverwaltung`,
-  `"${BRAND_NAME}" Finanzberatung`,
-  // Städte
+  // ── Städte ─────────────────────────────────────────────────────────────────
   `"${BRAND_NAME}" Immobilien Berlin`,
+  `"${BRAND_NAME}" Makler Berlin`,
   `"${BRAND_NAME}" Immobilien München`,
+  `"${BRAND_NAME}" Makler München`,
   `"${BRAND_NAME}" Immobilien Hamburg`,
   `"${BRAND_NAME}" Immobilien Frankfurt`,
   `"${BRAND_NAME}" Immobilien Köln`,
   `"${BRAND_NAME}" Immobilien Stuttgart`,
+  `"${BRAND_NAME}" Immobilien Düsseldorf`,
+  `"${BRAND_NAME}" Hausverwaltung Frankfurt`,
   `"${BRAND_NAME}" Beratung Berlin`,
-  `"${BRAND_NAME}" Beratung München`,
 ];
 
 async function runDeepScan(): Promise<{

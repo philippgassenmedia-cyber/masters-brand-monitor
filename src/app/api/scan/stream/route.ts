@@ -44,37 +44,43 @@ function buildQueries(params: ScanParams): Array<{ query: string; city?: string 
     queries.push({ query: params.freeText });
   }
 
-  // Kern-Queries — Immobilien + Unternehmensberatung (beide Modi)
+  // ── Immobilien (Primär-Fokus) ──────────────────────────────────────────────
   queries.push({ query: `"${brand}" Immobilien Makler` });
-  queries.push({ query: `"${brand}" Hausverwaltung` });
   queries.push({ query: `"${brand}" Immobilien GmbH` });
+  queries.push({ query: `"${brand}" Hausverwaltung` });
+  queries.push({ query: `"${brand}" Immobilienvermittlung` });
+  queries.push({ query: `"${brand}" Immobilien Projektentwicklung` });
+  queries.push({ query: `"${brand}" Bauträger` });
+  queries.push({ query: `"${brand}" Real Estate` });
+  queries.push({ query: `"${brand}" Property Management` });
+  queries.push({ query: `"${brand}" Wohnungsvermittlung` });
+  queries.push({ query: `"${brand}" Gewerbeimmobilien` });
+  queries.push({ query: `"${brand}" Immobilien Verwaltung` });
+  queries.push({ query: `"${brand}" Mietverwaltung` });
+  queries.push({ query: `"${brand}" Immobilienberatung` });
+
+  // ── Beratung / Consulting (Sekundär) ──────────────────────────────────────
   queries.push({ query: `"${brand}" Unternehmensberatung` });
   queries.push({ query: `"${brand}" Consulting` });
-  queries.push({ query: `"${brand}" Immobilien Projektentwicklung` });
-  queries.push({ query: `"${brand}" Property Management` });
-  queries.push({ query: `"${brand}" Real Estate` });
-  queries.push({ query: `"${brand}" Bauträger` });
-  queries.push({ query: `"${brand}" Immobilien Vermietung` });
-  queries.push({ query: `"${brand}" Beratung GmbH` });
-  queries.push({ query: `"${brand}" Immobilienberatung` });
-  queries.push({ query: `"${brand}" Investment` });
 
   if (params.mode === "deep") {
-    // Deep: noch mehr Varianten
-    queries.push({ query: `"${brand}" Immobilien Verwaltung` });
-    queries.push({ query: `"${brand}" Management Beratung` });
-    queries.push({ query: `"${brand}" Business Consulting` });
+    queries.push({ query: `"${brand}" Wohnimmobilien` });
+    queries.push({ query: `"${brand}" Neubau Immobilien` });
+    queries.push({ query: `"${brand}" Gewerbemakler` });
+    queries.push({ query: `"${brand}" Immobilien Vermietung` });
+    queries.push({ query: `"${brand}" Investment Immobilien` });
+    queries.push({ query: `"${brand}" Beratung GmbH` });
     queries.push({ query: `"${brand}" Facility Management` });
     queries.push({ query: `"${brand}" Vermögensverwaltung` });
-    queries.push({ query: `"${brand}" Finanzberatung` });
   }
 
-  // Städte-Queries — alle Städte in beiden Modi
+  // ── Städte-Queries (Immobilien-Fokus) ─────────────────────────────────────
   for (const city of cities) {
     queries.push({ query: `"${brand}" Immobilien ${city}`, city });
-    queries.push({ query: `"${brand}" Beratung ${city}`, city });
+    queries.push({ query: `"${brand}" Makler ${city}`, city });
     if (params.mode === "deep") {
-      queries.push({ query: `"${brand}" Makler ${city}`, city });
+      queries.push({ query: `"${brand}" Hausverwaltung ${city}`, city });
+      queries.push({ query: `"${brand}" Beratung ${city}`, city });
     }
   }
 

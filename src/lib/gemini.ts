@@ -33,14 +33,16 @@ function buildSystemPrompt(): string {
   return `Du bist ein spezialisierter Markenrechts-Analyst. Du bewertest, ob eine Web-Fundstelle
 eine potenzielle Verletzung der geschützten Wortmarke "${BRAND_NAME}" darstellt.
 
-Die Marke ist geschützt in den Bereichen:
-1. IMMOBILIEN (Makler, Hausverwaltung, Bauträger, Projektentwicklung, Vermietung, Property Management)
-2. UNTERNEHMENSBERATUNG (Consulting, Management-Beratung, Business Consulting)
-3. ALLE ÜBERSCHNEIDUNGSFELDER (Immobilienberatung, Investment, Facility Management, Vermögensverwaltung, Finanzberatung)
+Die Marke ist geschützt — PRIORITÄT in dieser Reihenfolge:
+1. ⭐ IMMOBILIEN (Hauptbereich): Makler, Hausverwaltung, Immobilienvermittlung, Bauträger,
+   Projektentwicklung, Vermietung, Mietverwaltung, Wohnungsvermittlung, Gewerbeimmobilien,
+   Property Management, Wohnimmobilien, Real Estate, Gewerbemakler, Neubau
+2. UNTERNEHMENSBERATUNG: Consulting, Management-Beratung, Business Consulting
+3. ÜBERSCHNEIDUNGSFELDER: Immobilienberatung, Investment Immobilien, Facility Management,
+   Vermögensverwaltung (nur wenn Immobilien-Bezug erkennbar)
 
-WICHTIG: Lieber EINMAL MEHR flaggen als zu wenig. Im Zweifel höheren Score vergeben.
-Alles was auch nur ENTFERNT in die Bereiche Immobilien, Beratung, Consulting,
-Finanzen, Investment, Facility Management, Vermögensverwaltung fällt, ist relevant.
+WICHTIG: Immobilienfirmen haben höchste Priorität. Lieber einmal mehr flaggen als zu wenig.
+Jede Firma die "${BRAND_NAME}" im Namen trägt UND im Immobilienbereich tätig ist → Score ≥ 8.
 
 ═══ MARKENINHABER ═══
 Inhaber: ${BRAND_OWNER}
@@ -181,38 +183,50 @@ export async function analyzeHitWithGemini(input: {
   const parsed = AnalysisSchema.parse(JSON.parse(text));
 
   // Score-Boost: Gemini bewertet oft zu konservativ.
-  // Wenn der Firmenname/URL klar "Master" im Immobilien-Kontext nutzt, Score anheben.
   const brandLower = BRAND_NAME.toLowerCase();
   const subjectLower = (parsed.subject_company ?? "").toLowerCase();
   const urlLower = input.raw.url.toLowerCase();
   const titleLower = input.raw.title.toLowerCase();
   const domainLower = new URL(input.raw.url).hostname.toLowerCase();
+  const fullText = `${titleLower} ${input.raw.snippet} ${subjectLower} ${urlLower}`;
 
-  // Exact: Firmenname enthält "master" als eigenständiges Wort
   const nameHasBrand = new RegExp(`\\b${brandLower}\\b`).test(subjectLower);
-  // Domain enthält "master"
   const domainHasBrand = domainLower.includes(brandLower);
-  // Immobilien-Kontext in Title/URL/Snippet
-  const hasImmoContext = /immobili|makler|hausverwalt|bautr|projektentwick|vermiet|property|real.estate|unternehmensberatung|consulting|beratung|management.beratung|business.consult|facility.management|investment|vermögensverwalt|finanzberatung|anlageberatung/i.test(
-    `${titleLower} ${input.raw.snippet} ${subjectLower} ${urlLower}`,
-  );
+
+  // Immobilien-Kontext (primär, höherer Boost)
+  const hasImmoContext = /immobili|makler|hausverwalt|mietverwalt|wohnungsvermittl|bautr|projektentwick|vermiet|property|real.estate|gewerbeimmobil|wohnimmobil|neubau|gewerbemakler/i.test(fullText);
+  // Beratung-Kontext (sekundär, niedrigerer Boost)
+  const hasBeratungContext = /unternehmensberatung|consulting|management.beratung|business.consult|facility.management|vermögensverwalt/i.test(fullText);
 
   if (nameHasBrand && hasImmoContext) {
-    // Klarer Treffer: Firma mit "Master" im Immobilien-Kontext
+    // Stärkster Treffer: Firma mit Brand im Immobilien-Kontext → direkt 9
+    parsed.score = Math.max(parsed.score, 9);
+    if (parsed.violation_category === "not_relevant" || parsed.violation_category === "generic_use") {
+      parsed.violation_category = "clear_violation";
+    }
+    parsed.is_violation = true;
+  } else if (domainHasBrand && hasImmoContext) {
+    // Domain mit Brand + Immobilien
     parsed.score = Math.max(parsed.score, 8);
     if (parsed.violation_category === "not_relevant" || parsed.violation_category === "generic_use") {
       parsed.violation_category = "suspected_violation";
     }
     parsed.is_violation = true;
-  } else if (nameHasBrand) {
-    // Firma mit "Master" aber unklar ob Immobilien
-    parsed.score = Math.max(parsed.score, 5);
-  } else if (domainHasBrand && hasImmoContext) {
-    // Domain mit "master" + Immobilien-Kontext
+  } else if (nameHasBrand && hasBeratungContext) {
+    // Firma mit Brand im Beratungs-Kontext
     parsed.score = Math.max(parsed.score, 7);
+    if (parsed.violation_category === "not_relevant" || parsed.violation_category === "generic_use") {
+      parsed.violation_category = "suspected_violation";
+    }
+    parsed.is_violation = true;
+  } else if (nameHasBrand) {
+    // Firma mit Brand, Kontext unklar
+    parsed.score = Math.max(parsed.score, 5);
+  } else if (domainHasBrand && hasBeratungContext) {
+    // Domain mit Brand + Beratung
+    parsed.score = Math.max(parsed.score, 6);
     parsed.is_violation = true;
   } else if (domainHasBrand) {
-    // Domain mit "master" ohne klaren Immo-Kontext
     parsed.score = Math.max(parsed.score, 4);
   }
 
