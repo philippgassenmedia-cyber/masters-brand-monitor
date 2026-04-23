@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState, useCallback, useTransition } from "react";
 import { NIZZA_BESCHREIBUNG, IMMOBILIEN_KLASSEN } from "@/lib/dpma/nizza-klassen";
 import { useScan } from "@/components/scan-context";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileDpmaScan } from "@/components/mobile-dpma-scan";
 
 interface NewHit {
   id?: string;
@@ -23,6 +25,12 @@ const DEFAULT_KLASSEN = new Set([36, 37, 42]);
 type ScanSource = "dpma" | "euipo" | "both";
 
 export function DpmaScanClient() {
+  const isMobile = useIsMobile();
+  if (isMobile) return <MobileDpmaScan />;
+  return <DpmaScanClientDesktop />;
+}
+
+function DpmaScanClientDesktop() {
   const { state, startScan, stopScan } = useScan();
   const [pending, startTransition] = useTransition();
 

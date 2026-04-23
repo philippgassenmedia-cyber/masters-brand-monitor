@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { GermanyMap, type ScanCity } from "@/components/germany-map";
 import { useScan } from "@/components/scan-context";
+import { useIsMobile } from "@/hooks/use-mobile";
+import { MobileWebScan } from "@/components/mobile-web-scan";
 
 type SearchRegion = "deutschland" | "hessen" | "dach" | "eu" | "welt";
 type ScanMode = "quick" | "deep";
@@ -52,6 +54,12 @@ function formatDuration(ms: number): string {
 }
 
 export function ScanClient() {
+  const isMobile = useIsMobile();
+  if (isMobile) return <MobileWebScan />;
+  return <ScanClientDesktop />;
+}
+
+function ScanClientDesktop() {
   const { state, startScan, stopScan } = useScan();
 
   // Local UI state only
