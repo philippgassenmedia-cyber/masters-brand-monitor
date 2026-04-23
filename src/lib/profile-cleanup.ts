@@ -145,6 +145,16 @@ export function normalizeAddressKey(s: string | null | undefined): string | null
   return `${plz}:${city}${street ? ":" + street : ""}`;
 }
 
+/** Extrahiert Geschäftsführer/Inhaber aus rohem Impressum-Text */
+export function parseGeschaeftsfuehrer(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const m = raw.match(
+    /(?:Geschäftsführer(?:in)?|Vertretungsberechtigte?r?|Inhaber(?:in)?|CEO|Managing Director)[:\s]+([A-ZÄÖÜ][a-zäöüß][\wÄÖÜäöüß.\- ]{1,60}?)(?=\s*(?:Telefon|Tel\.|E-Mail|Email|Fax|USt|HRB|Registergericht|Amtsgericht|Anschrift|Adresse|Web|\n|$))/i,
+  );
+  if (!m?.[1]) return null;
+  return m[1].trim().replace(/[,;.]+$/, "") || null;
+}
+
 export function extractCompanyFromText(s: string | null | undefined): string | null {
   if (!s) return null;
   // 1) Gemini schreibt Firmennamen in Anführungszeichen
