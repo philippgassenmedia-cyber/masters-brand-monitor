@@ -151,13 +151,21 @@ function parseHits(html: string, seenAz: Set<string>): RawHit[] {
   return hits;
 }
 
+/** Lädt eine DPMA-Detailseite und gibt den bereinigten Text zurück */
+export async function fetchDetailPageHttp(az: string): Promise<string> {
+  const url = `https://register.dpma.de/DPMAregister/marke/register/${az}/DE`;
+  const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(20_000) });
+  const html = await res.text();
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+}
+
 /** Sucht einen Begriff im DPMA-Register, paginiert automatisch */
 export async function searchDpmaHttp(
   searchTerm: string,
   opts: HttpSearchOpts,
   seenAz: Set<string>,
   log: string[],
-): Promise<{ hits: RawHit[]; diag: string }> {
+): Promise<{ hits: RawHit[]; diag: string; corsBlocked: boolean }> {
   const hits: RawHit[] = [];
   let diag = "";
 
@@ -292,9 +300,11 @@ export async function searchDpmaHttp(
 
     diag = `HTTP ${searchRes.status} · ${finalUrl.slice(-50)} · ${linkCount} Links · ${hits.length} AZ`;
   } catch (e) {
+    const corsBlocked = e instanceof TypeError;
     diag = `FEHLER: ${(e as Error).message.slice(0, 150)}`;
     log.push(`✗ ${diag}`);
+    return { hits, diag, corsBlocked };
   }
 
-  return { hits, diag };
+  return { hits, diag, corsBlocked: false };
 }

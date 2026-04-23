@@ -4,6 +4,7 @@
 import { getSupabaseAdminClient } from "../supabase/server";
 import { matchAgainstStems } from "./matching";
 import { classifyTrademark } from "./classifier";
+import { resolveCompanyProfile } from "../resolve-company";
 import { getTopVariants } from "./variant-generator";
 import { trackGeminiCall } from "../gemini-usage";
 import type { DpmaKurierHit } from "./types";
@@ -164,10 +165,6 @@ export async function* runDpmaSearchStream(
   opts: DpmaSearchOptions = {},
 ): AsyncGenerator<DpmaEvent> {
   const klassen = opts.klassen ?? "36 37 42";
-  const db = getSupabaseAdminClient();
-  let totalFound = 0;
-  let newTrademarks = 0;
-  let updated = 0;
   let errorCount = 0;
 
   yield { type: "browser:start" };
@@ -186,7 +183,6 @@ export async function* runDpmaSearchStream(
         yield { type: "status", message: `[${i + 1}/${variants.length}] Suche „${variant}" im DPMA-Register…` };
 
         try {
-          // 2s Pause zwischen Gemini-Calls
           if (i > 0) await new Promise(r => setTimeout(r, 2000));
 
           const results = await searchDpmaViaGemini(variant, klassen);
@@ -223,16 +219,26 @@ export async function* runDpmaSearchStream(
     }
   }
 
-  totalFound = allHits.length;
-  yield { type: "browser:loaded", trefferCount: totalFound };
-  yield { type: "browser:done", hitCount: totalFound };
+  yield { type: "browser:loaded", trefferCount: allHits.length };
+  yield* runDpmaClassify(allHits, stems);
+}
 
-  // Phase 2: Analyse + Speicherung
-  yield { type: "status", message: `Analysiere ${totalFound} Treffer…` };
+/** Analyse-Phase: klassifiziert gesammelte Treffer, speichert in DB, streamt Events. */
+export async function* runDpmaClassify(
+  uniqueHits: DpmaKurierHit[],
+  stems: string[],
+): AsyncGenerator<DpmaEvent> {
+  const db = getSupabaseAdminClient();
+  let newTrademarks = 0;
+  let updated = 0;
+  let errorCount = 0;
 
-  for (let i = 0; i < allHits.length; i++) {
-    const hit = allHits[i];
-    yield { type: "analyze:start", index: i + 1, total: allHits.length, markenname: hit.markenname };
+  yield { type: "browser:done", hitCount: uniqueHits.length };
+  yield { type: "status", message: `Starte Analyse von ${uniqueHits.length} Treffern…` };
+
+  for (let i = 0; i < uniqueHits.length; i++) {
+    const hit = uniqueHits[i];
+    yield { type: "analyze:start", index: i + 1, total: uniqueHits.length, markenname: hit.markenname };
 
     try {
       const match = matchAgainstStems(hit.markenname, stems);
@@ -251,9 +257,30 @@ export async function* runDpmaSearchStream(
         continue;
       }
 
-      // 2s Pause vor Gemini-Klassifizierung
       await new Promise(r => setTimeout(r, 2000));
       const classification = await classifyTrademark(hit, match);
+
+      const fristEnde = hit.schutzdauer_bis ?? (hit.veroeffentlichungstag
+        ? (() => { const d = new Date(hit.veroeffentlichungstag!); if (isNaN(d.getTime())) return null; d.setMonth(d.getMonth() + 3); return d.toISOString().slice(0, 10); })()
+        : null);
+
+      let resolvedWebsite: string | null = null;
+      const shouldLookupWebsite =
+        classification.score >= 5 || match.type === "exact" || match.type === "compound";
+
+      if (shouldLookupWebsite) {
+        try {
+          const searchName = hit.markenname + (hit.anmelder ? ` ${hit.anmelder}` : "");
+          yield { type: "status", message: `Website suchen: ${searchName.slice(0, 50)}…` };
+          const { resolvedUrl, profile: webProfile } = await resolveCompanyProfile(searchName);
+          resolvedWebsite = resolvedUrl;
+          if (webProfile?.company_name && !hit.anmelder) {
+            hit.anmelder = webProfile.company_name;
+          }
+        } catch {
+          // Website-Suche ist optional
+        }
+      }
 
       const { data: inserted } = await db.from("trademarks").insert({
         aktenzeichen: hit.aktenzeichen,
@@ -261,6 +288,7 @@ export async function* runDpmaSearchStream(
         anmelder: hit.anmelder,
         anmeldetag: hit.anmeldetag,
         veroeffentlichungstag: hit.veroeffentlichungstag,
+        widerspruchsfrist_ende: fristEnde,
         status: hit.status,
         nizza_klassen: hit.nizza_klassen,
         waren_dienstleistungen: hit.waren_dienstleistungen,
@@ -276,10 +304,11 @@ export async function* runDpmaSearchStream(
         branchenbezug: classification.branchenbezug,
         prioritaet: classification.prioritaet,
         begruendung: classification.begruendung,
+        resolved_website: resolvedWebsite,
       }).select("id").single();
 
       newTrademarks++;
-      yield { type: "hit:new", id: inserted?.id ?? "", aktenzeichen: hit.aktenzeichen, markenname: hit.markenname, score: classification.score, website: null };
+      yield { type: "hit:new", id: inserted?.id ?? "", aktenzeichen: hit.aktenzeichen, markenname: hit.markenname, score: classification.score, website: resolvedWebsite };
       yield { type: "analyze:done", markenname: hit.markenname, score: classification.score, matchType: match.type };
     } catch (e) {
       const msg = (e as Error).message;
@@ -290,5 +319,5 @@ export async function* runDpmaSearchStream(
     }
   }
 
-  yield { type: "done", totalFound, newTrademarks, updated, errors: errorCount };
+  yield { type: "done", totalFound: uniqueHits.length, newTrademarks, updated, errors: errorCount };
 }

@@ -208,34 +208,46 @@ export async function POST(req: Request) {
                 // Scrape impressum
                 const profile = await scrapeImpressum(result.url).catch(() => null);
 
-                // Analyze
-                const analysis = await analyzeHitWithGemini({
-                  raw: { url: result.url, title: result.title, snippet: result.snippet },
-                  profile,
-                });
+                // Analyze — Fehler nicht fatal: Hit wird auch ohne KI-Daten gespeichert
+                let analysis: Awaited<ReturnType<typeof analyzeHitWithGemini>> | null = null;
+                try {
+                  analysis = await analyzeHitWithGemini({
+                    raw: { url: result.url, title: result.title, snippet: result.snippet },
+                    profile,
+                  });
+                } catch (e) {
+                  errorCount++;
+                  send({ type: "error", message: `KI-Analyse fehlgeschlagen für ${host}: ${(e as Error).message.slice(0, 120)}` });
+                }
 
                 // Insert — sofort gespeichert, unabhängig vom weiteren Scan-Verlauf
-                const { data: inserted } = await db
+                const { data: inserted, error: insertError } = await db
                   .from("hits")
                   .insert({
                     url: result.url,
                     domain: host,
                     title: result.title,
                     snippet: result.snippet,
-                    ai_score: analysis.score,
-                    ai_reasoning: analysis.reasoning,
-                    ai_recommendation: analysis.recommendation,
-                    ai_violation_category: analysis.violation_category,
-                    is_violation: analysis.is_violation,
-                    company_name: analysis.subject_company ?? profile?.company_name,
-                    address: analysis.subject_company_address ?? profile?.address,
-                    email: profile?.email,
-                    phone: profile?.phone,
+                    ai_score: analysis?.score ?? null,
+                    ai_reasoning: analysis?.reasoning ?? null,
+                    ai_recommendation: analysis?.recommendation ?? null,
+                    ai_violation_category: analysis?.violation_category ?? null,
+                    is_violation: analysis?.is_violation ?? null,
+                    company_name: analysis?.subject_company ?? profile?.company_name ?? null,
+                    address: analysis?.subject_company_address ?? profile?.address ?? null,
+                    email: profile?.email ?? null,
+                    phone: profile?.phone ?? null,
                     status: "new",
                     scan_run_id: runId,
                   })
                   .select("id")
                   .single();
+
+                if (insertError) {
+                  errorCount++;
+                  send({ type: "error", message: `DB-Insert fehlgeschlagen für ${host}: ${insertError.message.slice(0, 120)}` });
+                  continue;
+                }
 
                 newHits++;
                 send({
@@ -243,12 +255,13 @@ export async function POST(req: Request) {
                   id: inserted?.id,
                   domain: host,
                   url: result.url,
-                  score: analysis.score,
-                  company: analysis.subject_company ?? profile?.company_name,
+                  score: analysis?.score ?? null,
+                  company: analysis?.subject_company ?? profile?.company_name ?? null,
                   city: q.city,
                 });
-              } catch {
+              } catch (e) {
                 errorCount++;
+                send({ type: "error", message: `Fehler bei ${result.url?.slice(0, 60)}: ${(e as Error).message?.slice(0, 100)}` });
               }
             }
           } catch (e) {
