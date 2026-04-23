@@ -99,9 +99,17 @@ export function canonicalKey(
     return `d:${domain}`;
   }
 
-  // Aggregator-Hits nie zusammenführen: company_name + address kommen aus
-  // der KI und spiegeln oft den Markeninhaber selbst wider, nicht den Verletzer.
-  // Jede URL bekommt eine eigene Gruppe — der Nutzer sieht alle Treffer einzeln.
+  // Aggregator-Hits: nur zusammenführen wenn BEIDE Felder eindeutig vorhanden:
+  //   1. Firmenname mit mind. 2 Wörtern (schützt vor Einzel-Token wie "MASTER")
+  //   2. Straßen-genaue Adresse (PLZ + Stadt + Straße, mind. 3 Segmente)
+  //      → damit reicht "60000:frankfurt" allein nicht, "60000:frankfurt:hauptstr-5" schon.
+  // Fehlt eines der beiden Felder → jede URL bekommt eine eigene Gruppe.
+  const addrKey = normalizeAddressKey(hit.address);
+  const normalized = normalizeCompany(cleanCompany(hit.company_name));
+  const hasStreet = addrKey != null && addrKey.split(":").length >= 3;
+  const hasCompany = normalized != null && normalized.trim().split(/\s+/).length >= 2;
+
+  if (hasCompany && hasStreet) return `ca:${normalized}|${addrKey}`;
   return `u:${domain}:${hit.url}`;
 }
 
