@@ -6,6 +6,7 @@ import { KpiCard } from "@/components/kpi-card";
 import { Sparkline } from "@/components/sparkline";
 import { groupHits, resolveCompany } from "@/lib/dedupe";
 import { HitsTable, type HitGroupRow } from "@/components/hits-table";
+import { RunningBanner } from "@/components/running-banner";
 import type { Hit, HitStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -146,6 +147,14 @@ export default async function DashboardPage({
 
   return (
     <AppShell user={auth.user}>
+      {lastRun?.status === "running" && (
+        <RunningBanner
+          newHits={lastRun.new_hits}
+          startedAt={lastRun.started_at}
+          region={lastRun.region}
+        />
+      )}
+
       {/* KPI-Reihe */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <KpiCard
