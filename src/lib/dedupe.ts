@@ -99,15 +99,19 @@ export function canonicalKey(
     return `d:${domain}`;
   }
 
-  // Aggregator-Hit → versuche Firma + Adresse aufzulösen
+  // Aggregator-Hit → nur direkt gescrapte Felder für den Key verwenden.
+  // KI-Reasoning/Snippet NICHT nutzen: der überwachte Markenname taucht in
+  // jedem AI-Text auf und würde sonst alle Treffer in eine Gruppe zwingen.
   const addrKey = normalizeAddressKey(hit.address);
-  const resolved = resolveCompany(hit);
-  const normalized = normalizeCompany(resolved);
+  const normalized = normalizeCompany(cleanCompany(hit.company_name));
 
   if (normalized && addrKey) return `ca:${normalized}|${addrKey}`;
-  if (normalized) return `c:${normalized}`;
+  // Nur auf company_name allein groupen wenn es mindestens 2 Wörter hat
+  // (verhindert dass einzelne Tokens wie "MASTER" als Key dienen)
+  if (normalized && normalized.split(/\s+/).length >= 2) return `c:${normalized}`;
   if (addrKey) return `a:${addrKey}`;
-  return `u:${hit.domain}:${hit.url}`;
+  // Kein verlässlicher Identifier → jede URL bekommt eigene Gruppe
+  return `u:${domain}:${hit.url}`;
 }
 
 export interface HitGroup {
