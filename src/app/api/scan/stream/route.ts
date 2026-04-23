@@ -158,13 +158,6 @@ export async function POST(req: Request) {
         };
 
         for (let i = 0; i < queries.length; i++) {
-          // Check if client disconnected
-          if (req.signal.aborted) {
-            send({ type: "status", message: "Abgebrochen durch Client" });
-            await flushRunStats("partial");
-            break;
-          }
-
           const q = queries[i];
           send({
             type: "query:start",
