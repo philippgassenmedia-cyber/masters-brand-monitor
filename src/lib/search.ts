@@ -122,17 +122,39 @@ Maximal 10 Ergebnisse. Keine Einleitung, nur JSON.`;
     // Extract grounding results from the response
     const groundingMetadata = data.candidates?.[0]?.groundingMetadata;
     const groundingChunks = groundingMetadata?.groundingChunks ?? [];
-    const searchEntryPoint = groundingMetadata?.searchEntryPoint;
 
     // Try to get structured results from grounding chunks
     if (groundingChunks.length > 0) {
-      return groundingChunks
+      const raw = groundingChunks
         .filter((chunk: { web?: { uri: string; title: string } }) => chunk.web?.uri)
         .map((chunk: { web: { uri: string; title: string } }) => ({
           title: chunk.web.title || "",
           url: chunk.web.uri,
           snippet: "",
-        }));
+        })) as SearchResult[];
+
+      // Resolve vertexaisearch redirect URLs in parallel (5 s timeout each)
+      const resolved = await Promise.all(
+        raw.map(async (r) => {
+          if (!r.url.includes("vertexaisearch.cloud.google.com")) return r;
+          try {
+            const ctrl2 = new AbortController();
+            const t = setTimeout(() => ctrl2.abort(), 5_000);
+            const resp = await fetch(r.url, {
+              method: "HEAD",
+              redirect: "follow",
+              headers: { "User-Agent": "MastersBrandMonitor/1.0" },
+              signal: ctrl2.signal,
+            });
+            clearTimeout(t);
+            const finalUrl = resp.url || r.url;
+            return { ...r, url: finalUrl };
+          } catch {
+            return r; // keep redirect URL on failure rather than dropping the hit
+          }
+        }),
+      );
+      return resolved;
     }
 
     // Fall back to parsing the text response
