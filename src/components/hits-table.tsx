@@ -35,7 +35,7 @@ export interface HitGroupRow {
   relatedUrls: string[];
 }
 
-const INITIAL_VISIBLE = 3;
+const INITIAL_VISIBLE = 25;
 
 export function HitsTable({
   groups,

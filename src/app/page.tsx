@@ -70,13 +70,17 @@ export default async function DashboardPage({
   const minScore = Number(params.minScore ?? 0);
   const maxScore = Number(params.maxScore ?? 0);
   const showAll = params.status === "all";
+  const sortNewest = (params as Record<string, string>).sort === "new";
 
   // Alle Queries parallel starten statt sequentiell
   let filteredQuery = supabase
     .from("hits")
     .select("*")
-    .order("ai_score", { ascending: false, nullsFirst: false })
-    .order("last_seen_at", { ascending: false })
+    .order(sortNewest ? "first_seen_at" : "ai_score", {
+      ascending: false,
+      nullsFirst: false,
+    })
+    .order("first_seen_at", { ascending: false })
     .limit(500);
   if (params.status && params.status !== "all") {
     filteredQuery = filteredQuery.eq("status", params.status);
@@ -101,9 +105,10 @@ export default async function DashboardPage({
       .limit(5),
   ]);
 
+  const hitsError = hitsRes.error?.message;
   const rows = (hitsRes.data ?? []) as Hit[];
   const groups = groupHits(rows);
-  const groupRows: HitGroupRow[] = groups.map((g) => ({
+  let groupRows: HitGroupRow[] = groups.map((g) => ({
     key: g.key,
     title: resolveCompany(g.primary) ?? g.primary.domain,
     primaryId: g.primary.id,
@@ -116,6 +121,11 @@ export default async function DashboardPage({
     totalCount: g.totalCount,
     relatedUrls: g.related.map((r) => r.url),
   }));
+  if (sortNewest) {
+    groupRows = groupRows.sort(
+      (a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime(),
+    );
+  }
 
   const all = (kpiRes.data ?? []) as Array<{
     ai_score: number | null;
@@ -227,7 +237,12 @@ export default async function DashboardPage({
         <FilterLink
           label="Offen"
           href="/"
-          active={!params.status && !params.minScore && !params.maxScore}
+          active={!params.status && !params.minScore && !params.maxScore && !sortNewest}
+        />
+        <FilterLink
+          label="Neueste zuerst"
+          href="/?sort=new"
+          active={sortNewest}
         />
         <FilterLink
           label="Für Anwalt"
@@ -255,6 +270,12 @@ export default async function DashboardPage({
           />
         ))}
       </nav>
+
+      {hitsError && (
+        <div className="mt-4 rounded-xl border border-red-200 bg-red-50/80 px-4 py-3 text-xs text-red-700">
+          Fehler beim Laden der Treffer: {hitsError}
+        </div>
+      )}
 
       {/* Hits table */}
       <HitsTable groups={groupRows} totalUrls={rows.length} />
