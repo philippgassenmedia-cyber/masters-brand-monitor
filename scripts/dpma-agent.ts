@@ -53,21 +53,30 @@ function matchType(name: string, stems: string[]) {
   return {type:"fuzzy",stem:stems[0]};
 }
 
+const CLASSIFY_PROMPT = `Bewerte ob eine DPMA-Marke Verwechslungsgefahr mit "MASTER" (Immobilien/Beratung) darstellt.
+WICHTIG: "Master" in Zusammensetzungen wie Mastercard, Webmaster, Masterclass → Score 0-2.
+Nur Immobilien/Makler/Hausverwaltung/Beratung/Consulting-Kontext → Score 5+.
+Andere Branchen (IT, Gaming, Food, Mode) → Score 0-3.
+JSON: {"score":<0-10>,"branchenbezug":"<erkannte Branche>","prioritaet":"<low|medium|high|critical>","begruendung":"<warum relevant oder nicht>"}`;
+
 async function classify(name: string, az: string, inhaber: string|null, klassen: number[], match: {type:string}) {
   const IMMO = new Set([35,36,37,42,43]); const hasImmo = klassen.some(k=>IMMO.has(k));
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,{
       method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({systemInstruction:{parts:[{text:`Bewerte DPMA-Marke auf Relevanz für "MASTER" (Immobilien). JSON: {"score":<0-10>,"branchenbezug":"...","prioritaet":"<low|medium|high|critical>","begruendung":"..."}`}]},
-        contents:[{role:"user",parts:[{text:`Marke:${name} AZ:${az} ${inhaber?`Inhaber:${inhaber}`:""} Klassen:${klassen.join(",")}`}]}],
+      body:JSON.stringify({systemInstruction:{parts:[{text:CLASSIFY_PROMPT}]},
+        contents:[{role:"user",parts:[{text:`Marke: ${name}\nAZ: ${az}\n${inhaber?`Inhaber: ${inhaber}`:""}\nKlassen: ${klassen.join(", ")||"keine"}\nImmo-Klasse: ${hasImmo?"JA":"NEIN"}\nMatch: ${match.type}`}]}],
         generationConfig:{responseMimeType:"application/json",temperature:0.2}})});
     if(!r.ok) throw new Error(`${r.status}`);
     const p = JSON.parse((await r.json()).candidates?.[0]?.content?.parts?.[0]?.text??"{}");
     let sc=p.score??5,pr=p.prioritaet??"medium";
-    if(match.type==="exact"){sc=Math.max(sc,hasImmo?9:8);pr=hasImmo?"critical":"high";}
-    else if(match.type==="compound"){sc=Math.max(sc,hasImmo?8:6);if(hasImmo)pr="high";}
+    // Konservatives Boosting: nur wenn Gemini selbst Immobilien erkennt
+    const geminiImmo = /immobili|makler|hausverwalt|beratung|consulting/i.test(p.branchenbezug??"");
+    if(match.type==="exact"&&hasImmo&&geminiImmo){sc=Math.max(sc,9);pr="critical";}
+    else if(match.type==="exact"&&hasImmo){sc=Math.max(sc,7);}
+    else if(match.type==="compound"&&hasImmo&&geminiImmo){sc=Math.max(sc,7);pr=pr==="low"?"high":pr;}
     return {score:sc,branchenbezug:p.branchenbezug??"",prioritaet:pr,begruendung:p.begruendung??""};
-  } catch { return {score:match.type==="exact"?8:5,branchenbezug:hasImmo?"Immobilien":"?",prioritaet:"medium",begruendung:"Auto"}; }
+  } catch { return {score:match.type==="exact"?(hasImmo?7:4):hasImmo?4:2,branchenbezug:hasImmo?"Immobilien-Klasse":"?",prioritaet:"medium",begruendung:"Auto"}; }
 }
 
 // ── DPMA Scan ───────────────────────────────────────────────

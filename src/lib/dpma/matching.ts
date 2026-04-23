@@ -8,6 +8,16 @@ export interface MatchResult {
   details: string;
 }
 
+// Wörter die "master" enthalten aber NICHT relevant sind
+const COMPOUND_BLACKLIST = new Set([
+  "webmaster", "postmaster", "mastercard", "masterclass", "masterplan",
+  "grandmaster", "headmaster", "taskmaster", "scoutmaster", "choirmaster",
+  "quizmaster", "masterwork", "mastermind", "masterstudy", "masterstudium",
+  "masterarbeit", "masterthesis", "toastmaster", "gamemaster", "dungeon",
+  "masterfile", "masterdata", "masterkey", "masternode", "masterslave",
+  "remaster", "burgmaster", "lockmaster", "yardmaster", "ringmaster",
+]);
+
 /**
  * Prüft einen Markennamen gegen eine Liste von Markenstämmen.
  * Versucht in absteigender Spezifität: exact → compound → fuzzy → phonetic → class_only
@@ -17,6 +27,8 @@ export function matchAgainstStems(
   stems: string[],
 ): MatchResult {
   const nameLower = markenname.toLowerCase().trim();
+  // Einzelwörter für Teilstring-Matching
+  const nameWords = nameLower.split(/[\s\-_.]+/).filter(w => w.length >= 3);
 
   for (const stem of stems) {
     const stemLower = stem.toLowerCase().trim();
@@ -29,22 +41,12 @@ export function matchAgainstStems(
         details: `Exakter Treffer: "${markenname}" = "${stem}"`,
       };
     }
-  }
-
-  for (const stem of stems) {
-    const stemLower = stem.toLowerCase().trim();
-
-    // 2. Compound-Match: Stamm ist Bestandteil des Markennamens
-    //    z.B. "MasterGround" enthält "Master"
-    if (
-      nameLower.includes(stemLower) &&
-      nameLower !== stemLower &&
-      stemLower.length >= 3
-    ) {
+    // Auch exakt wenn ein einzelnes Wort exakt matcht
+    if (nameWords.some(w => w === stemLower) && nameWords.length > 1) {
       return {
-        type: "compound",
+        type: "exact",
         stem,
-        details: `Zusammensetzung: "${markenname}" enthält "${stem}"`,
+        details: `Exaktes Wort: "${stem}" in "${markenname}"`,
       };
     }
   }
@@ -52,9 +54,45 @@ export function matchAgainstStems(
   for (const stem of stems) {
     const stemLower = stem.toLowerCase().trim();
 
-    // 3. Fuzzy-Match: Levenshtein-Distanz ≤ 2
+    // 2. Compound-Match: Stamm ist am ANFANG des Markennamens
+    //    "MasterGround" ✓, "Webmaster" ✗
+    if (
+      nameLower.startsWith(stemLower) &&
+      nameLower !== stemLower &&
+      stemLower.length >= 3 &&
+      !COMPOUND_BLACKLIST.has(nameLower)
+    ) {
+      return {
+        type: "compound",
+        stem,
+        details: `Zusammensetzung: "${markenname}" beginnt mit "${stem}"`,
+      };
+    }
+
+    // Auch wenn ein Wort mit dem Stamm beginnt (z.B. "Die Master-Gruppe")
+    for (const word of nameWords) {
+      if (
+        word.startsWith(stemLower) &&
+        word !== stemLower &&
+        !COMPOUND_BLACKLIST.has(word)
+      ) {
+        return {
+          type: "compound",
+          stem,
+          details: `Zusammensetzung: Wort "${word}" beginnt mit "${stem}" in "${markenname}"`,
+        };
+      }
+    }
+  }
+
+  for (const stem of stems) {
+    const stemLower = stem.toLowerCase().trim();
+
+    // 3. Fuzzy-Match: Levenshtein-Distanz ≤ 1 (strenger als vorher)
+    //    Bei kurzen Wörtern (≤6 Zeichen) ist Distanz 2 schon 33% — zu viel
+    const maxDist = stemLower.length <= 5 ? 1 : 2;
     const dist = distance(nameLower, stemLower);
-    if (dist <= 2 && dist > 0) {
+    if (dist <= maxDist && dist > 0) {
       return {
         type: "fuzzy",
         stem,
@@ -62,11 +100,11 @@ export function matchAgainstStems(
       };
     }
 
-    // Fuzzy auch auf Teilstrings versuchen (für zusammengesetzte Markennamen)
-    const words = nameLower.split(/[\s\-]+/);
-    for (const word of words) {
+    // Fuzzy auf Einzelwörter
+    for (const word of nameWords) {
+      const wordMaxDist = Math.min(word.length, stemLower.length) <= 5 ? 1 : 2;
       const wordDist = distance(word, stemLower);
-      if (wordDist <= 2 && wordDist > 0 && word.length >= 3) {
+      if (wordDist <= wordMaxDist && wordDist > 0) {
         return {
           type: "fuzzy",
           stem,
@@ -78,10 +116,11 @@ export function matchAgainstStems(
 
   for (const stem of stems) {
     // 4. Phonetischer Match: Kölner Phonetik
-    const namePhon = colognePhonetics(markenname);
     const stemPhon = colognePhonetics(stem);
+    if (!stemPhon) continue;
 
-    if (namePhon && stemPhon && namePhon === stemPhon) {
+    const namePhon = colognePhonetics(markenname);
+    if (namePhon && namePhon === stemPhon) {
       return {
         type: "phonetic",
         stem,
@@ -89,11 +128,10 @@ export function matchAgainstStems(
       };
     }
 
-    // Phonetik auch auf Teilstrings
-    const words = markenname.split(/[\s\-]+/);
-    for (const word of words) {
+    // Phonetik auf Einzelwörter
+    for (const word of nameWords) {
       const wordPhon = colognePhonetics(word);
-      if (wordPhon && stemPhon && wordPhon === stemPhon && word.length >= 3) {
+      if (wordPhon && wordPhon === stemPhon) {
         return {
           type: "phonetic",
           stem,
@@ -103,7 +141,7 @@ export function matchAgainstStems(
     }
   }
 
-  // 5. Fallback: class_only — kein Name-Match, nur Klassenzugehörigkeit
+  // 5. Fallback: class_only
   return {
     type: "class_only",
     stem: stems[0] ?? "",

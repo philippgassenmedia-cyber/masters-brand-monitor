@@ -108,6 +108,12 @@ function matchType(name: string, stems: string[]): { type: string; stem: string;
 }
 
 // ── Gemini Klassifizierung ──────────────────────────────────
+const CLASSIFY_SYSTEM = `Bewerte ob eine DPMA-Marke Verwechslungsgefahr mit "MASTER" (Immobilien/Beratung) darstellt.
+WICHTIG: "Master" in Zusammensetzungen wie Mastercard, Webmaster, Masterclass → Score 0-2.
+Nur Immobilien/Makler/Hausverwaltung/Beratung/Consulting-Kontext → Score 5+.
+Andere Branchen (IT, Gaming, Food, Mode) → Score 0-3.
+JSON: {"score":<0-10>,"branchenbezug":"<erkannte Branche>","prioritaet":"<low|medium|high|critical>","begruendung":"<warum relevant oder nicht>"}`;
+
 async function classify(hit: { markenname: string; aktenzeichen: string; anmelder: string | null; nizza_klassen: number[] }, match: { type: string; stem: string; details: string }) {
   const IMMO_KLASSEN = new Set([35, 36, 37, 42, 43]);
   const hasImmo = hit.nizza_klassen.some(k => IMMO_KLASSEN.has(k));
@@ -121,7 +127,7 @@ async function classify(hit: { markenname: string; aktenzeichen: string; anmelde
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          systemInstruction: { parts: [{ text: `Bewerte DPMA-Markentreffer auf Relevanz für Wortmarke "MASTER" im Immobilien-Kontext. Score 0-10. Antworte NUR JSON: {"score":<0-10>,"branchenbezug":"<Branche>","prioritaet":"<low|medium|high|critical>","begruendung":"<2 Sätze>"}` }] },
+          systemInstruction: { parts: [{ text: CLASSIFY_SYSTEM }] },
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
         }),
@@ -132,16 +138,18 @@ async function classify(hit: { markenname: string; aktenzeichen: string; anmelde
     const text = data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
     const parsed = JSON.parse(text);
 
-    // Boosting
     let score = parsed.score ?? 5;
     let prio = parsed.prioritaet ?? "medium";
-    if (match.type === "exact") { score = Math.max(score, hasImmo ? 9 : 8); prio = hasImmo ? "critical" : "high"; }
-    else if (match.type === "compound") { score = Math.max(score, hasImmo ? 8 : 6); if (hasImmo) prio = "high"; }
+    // Konservatives Boosting: nur wenn Gemini selbst Immobilien-Bezug erkennt
+    const geminiImmo = /immobili|makler|hausverwalt|beratung|consulting/i.test(parsed.branchenbezug ?? "");
+    if (match.type === "exact" && hasImmo && geminiImmo) { score = Math.max(score, 9); prio = "critical"; }
+    else if (match.type === "exact" && hasImmo) { score = Math.max(score, 7); }
+    else if (match.type === "compound" && hasImmo && geminiImmo) { score = Math.max(score, 7); prio = prio === "low" ? "high" : prio; }
 
     return { score, branchenbezug: parsed.branchenbezug ?? "", prioritaet: prio, begruendung: parsed.begruendung ?? "" };
   } catch (e) {
-    const fallback = match.type === "exact" ? (hasImmo ? 9 : 8) : match.type === "compound" ? (hasImmo ? 8 : 6) : 5;
-    return { score: fallback, branchenbezug: hasImmo ? "Immobilien" : "Unbekannt", prioritaet: match.type === "exact" ? "critical" : "medium", begruendung: `Auto-Score (Gemini error: ${(e as Error).message})` };
+    const fallback = match.type === "exact" ? (hasImmo ? 7 : 4) : match.type === "compound" ? (hasImmo ? 5 : 3) : 2;
+    return { score: fallback, branchenbezug: hasImmo ? "Immobilien-Klasse" : "Unbekannt", prioritaet: fallback >= 7 ? "high" : "medium", begruendung: `Auto-Score (Gemini: ${(e as Error).message})` };
   }
 }
 

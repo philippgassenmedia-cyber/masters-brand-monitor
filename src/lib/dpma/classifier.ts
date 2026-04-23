@@ -5,7 +5,6 @@ import type { MatchResult } from "./matching";
 
 const IMMOBILIEN_KLASSEN = new Set([35, 36, 37, 42, 43]);
 
-// Gemini antwortet manchmal auf Deutsch — wir mappen flexibel
 function normalizePriority(raw: string): TrademarkPriority {
   const lower = raw.toLowerCase().trim();
   if (["critical", "kritisch"].includes(lower)) return "critical";
@@ -21,22 +20,32 @@ const ScoreSchema = z.object({
   begruendung: z.string().min(1),
 });
 
-const SYSTEM_PROMPT = `Du bist ein Markenrechts-Analyst. Bewerte einen neuen DPMA-Markentreffer
-auf Relevanz für den Inhaber der Wortmarke "MASTER" im Immobilien-Kontext.
+const SYSTEM_PROMPT = `Du bist ein Markenrechts-Analyst. Bewerte ob eine DPMA-Markenanmeldung
+eine potenzielle Verwechslungsgefahr mit der Wortmarke "MASTER" im Immobilien- und
+Unternehmensberatungs-Kontext darstellt.
 
-Kontext: Der Markeninhaber überwacht das DPMA-Register nach neuen Markenanmeldungen,
-die seiner Marke "MASTER" ähnlich sind und im Immobilien-/Bau-/Hausverwaltungsbereich
-liegen könnten. Eine Marke mit hoher Ähnlichkeit + Immobilien-Bezug = hohe Priorität.
+KONTEXT:
+Der Markeninhaber "Master Immobilien GmbH" überwacht das Register nach Marken,
+die mit seiner Marke "MASTER" verwechselt werden könnten — insbesondere im Bereich
+Immobilien, Hausverwaltung, Makler, Bauträger, Unternehmensberatung, Consulting.
 
-Score 0-10:
-  9-10 = critical: Identischer/fast identischer Name, klar Immobilien-Kontext
-  7-8  = high: Sehr ähnlicher Name oder Wortverbindung, Immobilien-Bezug vorhanden
-  5-6  = medium: Ähnlich, aber anderer Kontext oder nur teilweiser Bezug
-  3-4  = low: Entfernter Bezug, wahrscheinlich irrelevant
-  0-2  = keine Relevanz
+WICHTIGE REGELN:
+- NUR Marken die TATSÄCHLICH im Immobilien-/Beratungs-Kontext agieren sind relevant
+- "Master" in Zusammensetzungen wie "Mastercard", "Webmaster", "Masterclass",
+  "Toastmaster", "Dungeon Master" → NICHT relevant (Score 0-2)
+- Marken mit "Master" die in völlig anderen Branchen sind (IT, Gaming, Bildung,
+  Lebensmittel, Mode, Musik) → NICHT relevant (Score 0-3)
+- Nur wenn Immobilien/Bau/Hausverwaltung/Makler/Beratung erkennbar → Score 5+
+
+SCORE-SKALA:
+  9-10 = critical: Name identisch/fast identisch UND klar Immobilien/Beratungs-Bezug
+  7-8  = high: Sehr ähnlicher Name UND Immobilien/Beratungs-Klassen vorhanden
+  5-6  = medium: Ähnlich, Immobilien-Klassen vorhanden aber Kontext unklar
+  3-4  = low: Name ähnlich, aber andere Branche erkennbar
+  0-2  = irrelevant: Kein Verwechslungsrisiko (andere Branche, generischer Begriff)
 
 Antworte NUR mit JSON:
-{"score": <0-10>, "branchenbezug": "<Branche der angemeldeten Marke>", "prioritaet": "<low|medium|high|critical>", "begruendung": "<2-3 Sätze>"}`;
+{"score": <0-10>, "branchenbezug": "<erkannte Branche der Marke>", "prioritaet": "<low|medium|high|critical>", "begruendung": "<2-3 Sätze warum relevant oder nicht>"}`;
 
 export interface ClassificationResult {
   score: number;
@@ -49,12 +58,11 @@ export async function classifyTrademark(
   hit: DpmaKurierHit,
   match: MatchResult,
 ): Promise<ClassificationResult> {
-  // class_only Treffer: kein Gemini-Call, Default-Werte
+  // class_only Treffer: kein Gemini-Call
   if (match.type === "class_only") {
-    const hasImmoClass = hit.nizza_klassen.some((k) => IMMOBILIEN_KLASSEN.has(k));
     return {
       score: 0,
-      branchenbezug: hasImmoClass ? "Immobilien-relevante Klasse" : "Unbekannt",
+      branchenbezug: "Unbekannt (kein Name-Match)",
       prioritaet: "low",
       begruendung: "Kein Name-Match zum Markenstamm. Nur durch Klassenzugehörigkeit erfasst.",
     };
@@ -68,9 +76,10 @@ export async function classifyTrademark(
   const prompt = [
     `Markenname: ${hit.markenname}`,
     `Aktenzeichen: ${hit.aktenzeichen}`,
-    hit.anmelder ? `Anmelder: ${hit.anmelder}` : "",
-    `Nizza-Klassen: ${hit.nizza_klassen.join(", ") || "keine"}`,
-    `Immobilien-relevante Klasse enthalten: ${hasImmoClass ? "JA" : "NEIN"}`,
+    hit.anmelder ? `Anmelder/Inhaber: ${hit.anmelder}` : "",
+    `Nizza-Klassen: ${hit.nizza_klassen.join(", ") || "keine angegeben"}`,
+    `Immobilien-relevante Klasse (35/36/37/42/43) enthalten: ${hasImmoClass ? "JA" : "NEIN"}`,
+    hit.waren_dienstleistungen ? `Waren/Dienstleistungen: ${hit.waren_dienstleistungen.slice(0, 500)}` : "",
     hit.status ? `Status: ${hit.status}` : "",
     `Match-Typ gegen Stamm "${match.stem}": ${match.type} — ${match.details}`,
   ]
@@ -104,31 +113,34 @@ export async function classifyTrademark(
       data.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text ?? "").join("") ?? "";
     const parsed = ScoreSchema.parse(JSON.parse(text));
 
-    // Boosting basierend auf Match-Typ + Immobilien-Klassen
-    if (match.type === "exact") {
-      parsed.score = Math.max(parsed.score, 8);
-      if (hasImmoClass) { parsed.score = Math.max(parsed.score, 9); parsed.prioritaet = "critical"; }
-      else parsed.prioritaet = parsed.prioritaet === "low" ? "high" : parsed.prioritaet;
-    } else if (match.type === "compound") {
-      parsed.score = Math.max(parsed.score, 6);
-      if (hasImmoClass) { parsed.score = Math.max(parsed.score, 8); parsed.prioritaet = "high"; }
-    } else if (match.type === "fuzzy" || match.type === "phonetic") {
-      parsed.score = Math.max(parsed.score, 5);
-      if (hasImmoClass) { parsed.score = Math.max(parsed.score, 7); parsed.prioritaet = "high"; }
+    // Konservatives Boosting: NUR wenn Gemini selbst Immobilien-Bezug erkennt
+    const geminiSaysImmo = /immobili|makler|hausverwalt|bautr|beratung|consulting/i.test(parsed.branchenbezug);
+
+    if (match.type === "exact" && hasImmoClass && geminiSaysImmo) {
+      parsed.score = Math.max(parsed.score, 9);
+      parsed.prioritaet = "critical";
+    } else if (match.type === "exact" && hasImmoClass) {
+      parsed.score = Math.max(parsed.score, 7);
+      if (parsed.prioritaet === "low") parsed.prioritaet = "medium";
+    } else if (match.type === "compound" && hasImmoClass && geminiSaysImmo) {
+      parsed.score = Math.max(parsed.score, 7);
+      parsed.prioritaet = parsed.prioritaet === "low" ? "high" : parsed.prioritaet;
     }
-    if (hasImmoClass && parsed.prioritaet === "low") parsed.prioritaet = "medium";
+    // KEIN Boosting für: compound ohne Immo-Klasse, fuzzy/phonetic
 
     return parsed;
   } catch (e) {
     clearTimeout(timeout);
-    const fallbackScore = match.type === "exact" ? (hasImmoClass ? 9 : 8)
-      : match.type === "compound" ? (hasImmoClass ? 8 : 6)
-      : match.type === "fuzzy" || match.type === "phonetic" ? (hasImmoClass ? 7 : 5)
-      : 3;
+    // Fallback: konservativer ohne Gemini
+    const fallbackScore =
+      match.type === "exact" ? (hasImmoClass ? 7 : 4)
+      : match.type === "compound" ? (hasImmoClass ? 5 : 3)
+      : match.type === "fuzzy" || match.type === "phonetic" ? (hasImmoClass ? 4 : 2)
+      : 1;
     return {
       score: fallbackScore,
-      branchenbezug: hasImmoClass ? "Immobilien-relevante Klasse" : "Nicht bewertet (Gemini-Fehler)",
-      prioritaet: match.type === "exact" ? "critical" : hasImmoClass ? "high" : "medium",
+      branchenbezug: hasImmoClass ? "Immobilien-Klasse vorhanden" : "Nicht bewertet",
+      prioritaet: fallbackScore >= 7 ? "high" : fallbackScore >= 4 ? "medium" : "low",
       begruendung: `Automatische Bewertung (Gemini nicht verfügbar): ${(e as Error).message}`,
     };
   }
