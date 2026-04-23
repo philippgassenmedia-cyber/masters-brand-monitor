@@ -33,7 +33,7 @@ export async function GET(req: Request) {
   let query = admin
     .from("hits")
     .select(
-      "ai_score, ai_violation_category, company_name, address, email, phone, domain, ai_reasoning, ai_recommendation, status, first_seen_at, last_seen_at",
+      "ai_score, violation_category, company_name, address, email, phone, domain, ai_reasoning, ai_recommendation, status, first_seen_at, last_seen_at",
     )
     .order("ai_score", { ascending: false, nullsFirst: false });
 
@@ -66,7 +66,7 @@ export async function GET(req: Request) {
   const rows = (hits ?? []).map((h) =>
     [
       escapeCSV(String(h.ai_score ?? "")),
-      escapeCSV(h.ai_violation_category),
+      escapeCSV(h.violation_category),
       escapeCSV(h.company_name),
       escapeCSV(h.address),
       escapeCSV(h.email),
