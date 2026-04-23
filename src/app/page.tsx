@@ -154,6 +154,7 @@ export default async function DashboardPage({
 
   const runs = (runsRes.data ?? []) as ScanRun[];
   const lastRun = runs[0];
+  const buildSha = process.env.BUILD_SHA ?? "—";
 
   return (
     <AppShell user={auth.user}>
@@ -223,12 +224,15 @@ export default async function DashboardPage({
               </p>
             )}
           </div>
-          <Link
-            href="/scan"
-            className="rounded-xl bg-stone-900 px-6 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(68,64,60,0.25)] transition hover:bg-stone-800"
-          >
-            Live-Scan öffnen →
-          </Link>
+          <div className="flex flex-col items-end gap-2">
+            <Link
+              href="/scan"
+              className="rounded-xl bg-stone-900 px-6 py-2.5 text-sm font-semibold text-white shadow-[0_6px_24px_rgba(68,64,60,0.25)] transition hover:bg-stone-800"
+            >
+              Live-Scan öffnen →
+            </Link>
+            <span className="text-[10px] text-stone-400 tabular-nums">v {buildSha}</span>
+          </div>
         </div>
       </section>
 
