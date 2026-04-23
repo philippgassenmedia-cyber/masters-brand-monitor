@@ -280,6 +280,15 @@ export default async function DashboardPage({
       {/* Hits table */}
       <HitsTable groups={groupRows} totalUrls={rows.length} />
 
+      <div className="mt-3 flex justify-end">
+        <Link
+          href="/hits"
+          className="text-xs text-stone-500 hover:text-stone-800 hover:underline"
+        >
+          Alle {(kpiRes.data ?? []).length} Einträge ungefiltert anzeigen →
+        </Link>
+      </div>
+
       {/* DPMA-Register Treffer */}
       {(dpmaRes.data ?? []).length > 0 && (
         <section className="glass mt-6 overflow-hidden">
