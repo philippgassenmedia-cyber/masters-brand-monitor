@@ -99,15 +99,9 @@ export function canonicalKey(
     return `d:${domain}`;
   }
 
-  // Aggregator-Hit: company_name kommt aus AI (subject_company) und enthält
-  // oft den überwachten Markennamen selbst → allein als Key unbrauchbar.
-  // Nur wenn PLZ-basierter Adressschlüssel UND company_name gemeinsam
-  // vorhanden sind, ist die Zuordnung sicher genug zum Gruppieren.
-  const addrKey = normalizeAddressKey(hit.address);
-  const normalized = normalizeCompany(cleanCompany(hit.company_name));
-
-  if (normalized && addrKey) return `ca:${normalized}|${addrKey}`;
-  // Ohne beide Felder: jede URL bekommt ihre eigene Gruppe
+  // Aggregator-Hits nie zusammenführen: company_name + address kommen aus
+  // der KI und spiegeln oft den Markeninhaber selbst wider, nicht den Verletzer.
+  // Jede URL bekommt eine eigene Gruppe — der Nutzer sieht alle Treffer einzeln.
   return `u:${domain}:${hit.url}`;
 }
 
