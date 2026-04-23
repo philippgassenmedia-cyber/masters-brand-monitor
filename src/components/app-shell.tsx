@@ -23,6 +23,7 @@ export async function AppShell({
       usageCount={usage.total}
       usageLimit={usage.limit}
       usageBreakdown={usage.breakdown}
+      buildSha={process.env.BUILD_SHA ?? "—"}
     />
   );
 
