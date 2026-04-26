@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/app-shell";
+import { EnrichHitsButton } from "@/components/enrich-hits-button";
 import type { Hit, HitStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -83,12 +84,15 @@ export default async function AllHitsPage({
 
   return (
     <AppShell user={auth.user}>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-base font-semibold text-stone-900">Alle Treffer</h1>
           <p className="text-xs text-stone-500">{hits.length} Einträge</p>
         </div>
-        <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">← Dashboard</Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <EnrichHitsButton />
+          <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">← Dashboard</Link>
+        </div>
       </div>
 
       {error && (
