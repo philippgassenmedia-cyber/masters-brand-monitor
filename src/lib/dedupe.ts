@@ -80,6 +80,30 @@ export function resolveCompany(
   );
 }
 
+// Extrahiert den kürzesten stabilen Ortsschlüssel aus einer Adresse.
+// Versucht zuerst PLZ+Stadt, dann PLZ allein, dann nur Stadtname.
+// Gibt null zurück wenn kein Ort erkennbar.
+function extractLocationKey(address: string | null | undefined): string | null {
+  if (!address) return null;
+  // PLZ+Stadt via normalizeAddressKey (liefert "PLZ:stadt" oder "PLZ:stadt:strasse")
+  const full = normalizeAddressKey(address);
+  if (full) {
+    const parts = full.split(":");
+    return parts.slice(0, 2).join(":"); // nur PLZ:stadt, ohne Strasse
+  }
+  // Kein PLZ — versuche nur Stadtname ("Frankfurt am Main", "München")
+  const cityMatch = address.match(/\b([A-ZÄÖÜ][a-zäöüß]{2,}(?:[\s\-][A-Za-zÄÖÜäöüß]{2,}){0,2})\b/);
+  if (cityMatch) return `c:${cityMatch[1].toLowerCase().replace(/[\s\-]+/g, "-")}`;
+  return null;
+}
+
+// Gibt true wenn der Firmenname eine Rechtsform enthält (GmbH, AG …).
+// Rechtsformen machen Namen juristisch eindeutig → weniger strikte Adresspflicht.
+function hasLegalSuffix(name: string | null | undefined): boolean {
+  if (!name) return false;
+  return /\b(gmbh(\s?&\s?co\.?\s?kg)?|ug(\s?\(haftungsbeschr[äa]nkt\))?|ag|kg|ohg|e\.?\s?k\.?|e\.?\s?v\.?|ltd\.?|inc\.?|mbh)\b/i.test(name);
+}
+
 // Liefert den Schlüssel, unter dem ein Hit gruppiert wird.
 //
 // Nicht-Aggregator-Domains (= eigene Firmen-Websites) werden IMMER nach Domain
@@ -87,8 +111,10 @@ export function resolveCompany(
 // zusammen landen, egal ob der Scraper verschiedene Firmennamen-Varianten
 // extrahiert hat ("Masterplan Immobilien" vs "Masterplan Immobilien Schwalbach").
 //
-// Aggregator-Hits werden nach Firmenname+Adresse gruppiert, damit identische
-// Firmen auf verschiedenen Portalen zusammenfinden.
+// Aggregator-Hits (immoscout, immowelt, …) werden nach Firmenname+Ort gruppiert,
+// damit identische Firmen auf verschiedenen Portalen zusammenfinden.
+// Anforderungen werden bewusst NIEDRIG gehalten, weil Gemini oft nur Stadtname
+// oder PLZ+Stadt liefert, selten die volle Straße.
 export function canonicalKey(
   hit: Pick<Hit, "company_name" | "domain" | "ai_reasoning" | "snippet" | "address" | "url">,
 ): string {
@@ -99,17 +125,25 @@ export function canonicalKey(
     return `d:${domain}`;
   }
 
-  // Aggregator-Hits: nur zusammenführen wenn BEIDE Felder eindeutig vorhanden:
-  //   1. Firmenname mit mind. 2 Wörtern (schützt vor Einzel-Token wie "MASTER")
-  //   2. Straßen-genaue Adresse (PLZ + Stadt + Straße, mind. 3 Segmente)
-  //      → damit reicht "60000:frankfurt" allein nicht, "60000:frankfurt:hauptstr-5" schon.
-  // Fehlt eines der beiden Felder → jede URL bekommt eine eigene Gruppe.
-  const addrKey = normalizeAddressKey(hit.address);
-  const normalized = normalizeCompany(cleanCompany(hit.company_name));
-  const hasStreet = addrKey != null && addrKey.split(":").length >= 3;
-  const hasCompany = normalized != null && normalized.trim().split(/\s+/).length >= 2;
+  // Firmennamen normalisieren (einmal bereinigen)
+  const normalized = normalizeCompany(hit.company_name);
+  if (!normalized) return `u:${domain}:${hit.url}`;
 
-  if (hasCompany && hasStreet) return `ca:${normalized}|${addrKey}`;
+  const wordCount = normalized.trim().split(/\s+/).length;
+  const legal = hasLegalSuffix(hit.company_name);
+
+  // Mindestens 2 Wörter ODER eine Rechtsform — schützt vor Einzel-Tokens wie "Master"
+  if (wordCount < 2 && !legal) return `u:${domain}:${hit.url}`;
+
+  const locKey = extractLocationKey(hit.address);
+
+  // Mit Ort: immer gruppieren (PLZ+Stadt oder Stadtname reichen)
+  if (locKey) return `ca:${normalized}|${locKey}`;
+
+  // Ohne Ort: nur bei gesicherter Rechtsform (GmbH-Namen sind in DE juristisch eindeutig)
+  if (legal) return `ca:${normalized}`;
+
+  // Kein Ort, keine Rechtsform → zu unsicher zum Gruppieren
   return `u:${domain}:${hit.url}`;
 }
 
