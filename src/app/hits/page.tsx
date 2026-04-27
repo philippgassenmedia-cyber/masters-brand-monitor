@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/app-shell";
 import { EnrichHitsButton } from "@/components/enrich-hits-button";
+import { groupHits, resolveCompany } from "@/lib/dedupe";
 import type { Hit, HitStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -23,6 +24,17 @@ function scoreBg(score: number | null) {
   return "bg-emerald-100 text-emerald-800";
 }
 
+function extractCity(address: string | null | undefined): string | null {
+  if (!address) return null;
+  const plzMatch = address.match(/\b\d{5}\s+([A-ZÄÖÜ][a-zäöüß\-]+(?:\s+[a-zäöüA-ZÖÜÄ][a-zäöüß\-]+)*)/);
+  if (plzMatch) return plzMatch[1];
+  const afterComma = address.match(/,\s*([A-ZÄÖÜ][a-zäöüß\-]+(?:\s+[a-zäöüA-ZÖÜÄ][a-zäöüß\-]+)*)\s*$/);
+  if (afterComma) return afterComma[1];
+  const bare = address.match(/\b([A-ZÄÖÜ][a-zäöüß]{3,}(?:\s+am\s+Main|(?:\s+[a-z]+)*)?)\s*$/);
+  if (bare) return bare[1];
+  return null;
+}
+
 export default async function AllHitsPage({
   searchParams,
 }: {
@@ -38,7 +50,7 @@ export default async function AllHitsPage({
 
   let query = supabase
     .from("hits")
-    .select("id, url, domain, title, company_name, ai_score, violation_category, status, first_seen_at, last_seen_at")
+    .select("*")
     .limit(2000);
 
   if (statusFilter && statusFilter !== "all") {
@@ -54,7 +66,9 @@ export default async function AllHitsPage({
   }
 
   const { data, error } = await query;
-  const hits = (data ?? []) as Pick<Hit, "id" | "url" | "domain" | "title" | "company_name" | "ai_score" | "violation_category" | "status" | "first_seen_at" | "last_seen_at">[];
+  const rawHits = (data ?? []) as Hit[];
+
+  const groups = groupHits(rawHits);
 
   const sortLink = (s: string, label: string) => (
     <Link
@@ -87,7 +101,9 @@ export default async function AllHitsPage({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-base font-semibold text-stone-900">Alle Treffer</h1>
-          <p className="text-xs text-stone-500">{hits.length} Einträge</p>
+          <p className="text-xs text-stone-500">
+            {groups.length} {groups.length === 1 ? "Firma" : "Firmen"} · {rawHits.length} URLs
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <EnrichHitsButton />
@@ -127,46 +143,70 @@ export default async function AllHitsPage({
               </tr>
             </thead>
             <tbody>
-              {hits.length === 0 && (
+              {groups.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-12 text-center text-stone-400">
                     Keine Treffer gefunden.
                   </td>
                 </tr>
               )}
-              {hits.map((h) => (
-                <tr key={h.id} className="border-t border-white/50 hover:bg-white/50 transition">
-                  <td className="px-4 py-2.5">
-                    <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold ${scoreBg(h.ai_score)}`}>
-                      {h.ai_score ?? "—"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <Link href={`/hits/${h.id}`} className="font-medium text-stone-900 hover:text-stone-600 hover:underline">
-                      {h.company_name ?? h.domain}
-                    </Link>
-                    <div className="text-[11px] text-stone-400">{h.domain}</div>
-                  </td>
-                  <td className="px-4 py-2.5 hidden md:table-cell">
-                    <a
-                      href={h.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="max-w-xs block truncate text-[11px] text-stone-400 hover:text-stone-700"
-                    >
-                      {h.url}
-                    </a>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-stone-600 ring-1 ring-white">
-                      {STATUS_LABEL[h.status] ?? h.status}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 hidden sm:table-cell text-[11px] text-stone-400">
-                    {new Date(h.first_seen_at).toLocaleDateString("de-DE")}
-                  </td>
-                </tr>
-              ))}
+              {groups.map((g) => {
+                const h = g.primary;
+                const title = resolveCompany(h) ?? h.domain;
+                const city = extractCity(h.address ?? h.subject_company_address);
+                return (
+                  <tr key={g.key} className="border-t border-white/50 hover:bg-white/50 transition">
+                    <td className="px-4 py-2.5">
+                      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold ${scoreBg(g.maxScore)}`}>
+                        {g.maxScore ?? "—"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2">
+                        <Link href={`/hits/${h.id}`} className="font-medium text-stone-900 hover:text-stone-600 hover:underline">
+                          {title}
+                        </Link>
+                        {g.totalCount > 1 && (
+                          <span
+                            className="rounded-full bg-stone-900/90 px-2 py-0.5 text-[10px] font-semibold text-white"
+                            title={g.related.map((r) => r.url).join("\n")}
+                          >
+                            +{g.totalCount - 1}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-stone-400">{h.domain}</div>
+                      {city && (
+                        <div className="mt-0.5 flex items-center gap-1 text-[11px] text-stone-400">
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
+                            <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                            <circle cx="12" cy="9" r="2.5"/>
+                          </svg>
+                          {city}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 hidden md:table-cell">
+                      <a
+                        href={h.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="max-w-xs block truncate text-[11px] text-stone-400 hover:text-stone-700"
+                      >
+                        {h.url}
+                      </a>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-stone-600 ring-1 ring-white">
+                        {STATUS_LABEL[h.status] ?? h.status}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 hidden sm:table-cell text-[11px] text-stone-400">
+                      {new Date(h.last_seen_at).toLocaleDateString("de-DE")}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
