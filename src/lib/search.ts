@@ -133,25 +133,36 @@ Maximal 10 Ergebnisse. Keine Einleitung, nur JSON.`;
           snippet: "",
         })) as SearchResult[];
 
-      // Resolve vertexaisearch redirect URLs in parallel (5 s timeout each)
+      // Resolve vertexaisearch redirect URLs in parallel.
+      // Strategy: HEAD first (fast), fall back to GET if HEAD is rejected (405)
+      // or times out. Both attempts follow redirects and read resp.url.
       const resolved = await Promise.all(
         raw.map(async (r) => {
           if (!r.url.includes("vertexaisearch.cloud.google.com")) return r;
-          try {
+          const tryFetch = async (method: "HEAD" | "GET") => {
             const ctrl2 = new AbortController();
-            const t = setTimeout(() => ctrl2.abort(), 5_000);
-            const resp = await fetch(r.url, {
-              method: "HEAD",
-              redirect: "follow",
-              headers: { "User-Agent": "MastersBrandMonitor/1.0" },
-              signal: ctrl2.signal,
-            });
-            clearTimeout(t);
-            const finalUrl = resp.url || r.url;
-            return { ...r, url: finalUrl };
-          } catch {
-            return r; // keep redirect URL on failure rather than dropping the hit
-          }
+            const t = setTimeout(() => ctrl2.abort(), 10_000);
+            try {
+              const resp = await fetch(r.url, {
+                method,
+                redirect: "follow",
+                headers: { "User-Agent": "Mozilla/5.0 (compatible; MastersBrandMonitor/1.0)" },
+                signal: ctrl2.signal,
+              });
+              clearTimeout(t);
+              return resp.url || null;
+            } catch {
+              clearTimeout(t);
+              return null;
+            }
+          };
+          const finalUrl =
+            (await tryFetch("HEAD")) ??
+            (await tryFetch("GET")) ??
+            r.url;
+          // Only replace if we actually resolved away from vertexaisearch
+          if (finalUrl.includes("vertexaisearch.cloud.google.com")) return r;
+          return { ...r, url: finalUrl };
         }),
       );
       return resolved;

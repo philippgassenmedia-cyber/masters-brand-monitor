@@ -38,6 +38,10 @@ const AGGREGATOR_DOMAINS = new Set([
   "apps.apple.com",
   "support.google.com",
   "sites.google.com",
+  // Gemini-Grounding Redirect-URLs die nicht aufgelöst werden konnten.
+  // Domain (inkl. numerische Subdomains wie 0.vertexaisearch…) als Aggregator
+  // behandeln damit Gruppierung nach Firma statt nach Redirect-URL erfolgt.
+  "vertexaisearch.cloud.google.com",
 ]);
 
 export function isAggregatorDomain(domain: string): boolean {
