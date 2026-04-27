@@ -33,6 +33,7 @@ export interface HitGroupRow {
   lastSeen: string;
   totalCount: number;
   relatedUrls: string[];
+  city: string | null;
 }
 
 const INITIAL_VISIBLE = 25;
@@ -116,6 +117,15 @@ export function HitsTable({
                         </span>
                       )}
                     </div>
+                    {g.city && (
+                      <div className="mt-0.5 flex items-center gap-1 text-[11px] text-stone-400">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">
+                          <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z"/>
+                          <circle cx="12" cy="9" r="2.5"/>
+                        </svg>
+                        {g.city}
+                      </div>
+                    )}
                   </td>
                   <td className="max-w-md px-5 py-3 text-stone-700">
                     <div className="line-clamp-2 text-[13px]">

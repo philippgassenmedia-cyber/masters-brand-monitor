@@ -26,10 +26,10 @@ export function ExcludeButton({ hitId, domain }: { hitId: string; domain: string
           else alert("Fehler beim Ausschließen");
         });
       }}
-      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-50"
-      title="Als eigene Marke markieren"
+      className="rounded-full border border-stone-200 bg-white/70 px-3 py-1 text-[11px] font-medium text-stone-600 hover:border-stone-300 hover:bg-white hover:text-stone-900 disabled:opacity-40 transition"
+      title="Als eigene Marke markieren — entfernt alle Treffer dieser Domain"
     >
-      {pending ? "…" : "Eigen"}
+      {pending ? "…" : "Eigene Marke"}
     </button>
   );
 }

@@ -34,6 +34,20 @@ interface ScanRun {
   status: string;
 }
 
+function extractCity(address: string | null | undefined): string | null {
+  if (!address) return null;
+  // PLZ + city: "60313 Frankfurt am Main"
+  const plzCity = address.match(/\d{5}\s+([A-ZÄÖÜ][a-zäöüß][\wÄÖÜäöüß\s\-]{1,30})/);
+  if (plzCity) return plzCity[1].split(/[,;]/)[0].trim();
+  // City after comma: "Hauptstr. 5, Frankfurt am Main"
+  const afterComma = address.match(/,\s*([A-ZÄÖÜ][a-zäöüß][\wÄÖÜäöüß\s\-]{1,25})\s*(?:\d{5}|$)/);
+  if (afterComma) return afterComma[1].trim();
+  // Bare city or "city district": "Berlin" / "München-Schwabing"
+  const bare = address.match(/^([A-ZÄÖÜ][a-zäöüß][\wÄÖÜäöüß\s\-]{1,25})\s*(?:[,;]|$)/);
+  if (bare) return bare[1].trim();
+  return null;
+}
+
 function dayBucket(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -121,6 +135,7 @@ export default async function DashboardPage({
     lastSeen: g.primary.last_seen_at,
     totalCount: g.totalCount,
     relatedUrls: g.related.map((r) => r.url),
+    city: extractCity(g.primary.address ?? g.primary.subject_company_address),
   }));
   if (sortNewest) {
     groupRows = groupRows.sort(
