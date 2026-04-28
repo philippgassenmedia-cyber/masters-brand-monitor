@@ -230,7 +230,7 @@ export function Sidebar({
         </div>
 
         <Link
-          href="/settings"
+          href="/account"
           className="relative z-20 flex cursor-pointer items-center gap-3 rounded-xl border border-white/70 bg-white/60 px-3 py-3 transition hover:bg-white/90"
         >
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-stone-900 text-sm font-bold text-white">
