@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { deriveAgentToken } from "../config/route";
+import { deriveAgentToken } from "@/lib/agent-token";
 
 export async function GET() {
   const supabase = await getSupabaseServerClient();

@@ -1,11 +1,5 @@
 import { NextResponse } from "next/server";
-import { createHmac } from "crypto";
-
-// Derives a stable agent token from the service role key.
-// Token changes only if SUPABASE_SERVICE_ROLE_KEY changes (very rare).
-export function deriveAgentToken(serviceKey: string): string {
-  return createHmac("sha256", serviceKey).update("dpma-agent-v1").digest("hex").slice(0, 40);
-}
+import { deriveAgentToken } from "@/lib/agent-token";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
