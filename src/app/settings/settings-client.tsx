@@ -855,13 +855,29 @@ echo [OK] Node.js gefunden: %NODE_VER%
 
 :: Prüfe ob Git installiert ist
 where git >nul 2>&1
-if %errorlevel% neq 0 (
-  echo [FEHLER] Git ist nicht installiert.
-  echo Bitte installiere Git von https://git-scm.com/download/win
-  echo.
-  pause
-  exit /b 1
+if %errorlevel% equ 0 goto :git_ok
+
+:: Fallback: Häufige Git-Installationspfade
+set "GIT_PATHS=%ProgramFiles%\\Git\\cmd;%ProgramFiles(x86)%\\Git\\cmd;%LOCALAPPDATA%\\Programs\\Git\\cmd"
+for %%P in (%GIT_PATHS%) do (
+  if exist "%%P\\git.exe" (
+    set "PATH=%%P;%PATH%"
+    goto :git_ok
+  )
 )
+
+echo [FEHLER] Git wurde nicht gefunden.
+echo.
+echo Git ist moeglicherweise installiert aber nicht im PATH.
+echo Bitte versuche:
+echo   1. Dieses Fenster schliessen und neu oeffnen
+echo   2. Oder Git neu installieren von https://git-scm.com/download/win
+echo.
+pause
+exit /b 1
+
+:git_ok
+echo [OK] Git gefunden.
 
 :: Projekt-Ordner erstellen falls nötig
 if not exist "C:\\dpma-agent\\package.json" (
