@@ -1,5 +1,5 @@
 import { getSupabaseServerClient, getSupabaseAdminClient } from "@/lib/supabase/server";
-import { searchWeb, SearchBudgetExceededError, type SearchRegion } from "@/lib/search";
+import { searchWeb, SearchBudgetExceededError, SearchApiKeyError, SearchRateLimitError, type SearchRegion } from "@/lib/search";
 import { analyzeHitWithGemini } from "@/lib/gemini";
 import { scrapeImpressum } from "@/lib/impressum-scraper";
 import { loadExcludedDomains, isExcluded, hostOf, BRAND_NAME } from "@/lib/brand";
@@ -180,10 +180,23 @@ export async function POST(req: Request) {
 
           try {
             queriesRun++;
-            // Rate-Limit Schutz: Quick 2s, Deep 4s zwischen Gemini Calls
-            const delay = mode === "quick" ? 2000 : 4000;
+            // Rate-Limit Schutz: 4s Quick, 6s Deep → bleibt unter 15 RPM (Gemini Free Tier)
+            const delay = mode === "quick" ? 4000 : 6000;
             if (i > 0) await new Promise((r) => setTimeout(r, delay));
-            const results = await searchWeb(q.query, region);
+
+            // Retry bei 429: einmal warten, dann nochmal versuchen
+            let results;
+            try {
+              results = await searchWeb(q.query, region);
+            } catch (e) {
+              if (e instanceof SearchRateLimitError) {
+                send({ type: "status", message: `Rate-Limit — warte ${Math.round(e.retryAfterMs / 1000)}s…` });
+                await new Promise((r) => setTimeout(r, e.retryAfterMs));
+                results = await searchWeb(q.query, region);
+              } else {
+                throw e;
+              }
+            }
             rawResults += results.length;
             send({ type: "query:done", resultCount: results.length, city: q.city });
 
@@ -275,6 +288,15 @@ export async function POST(req: Request) {
               send({ type: "error", message: e.message });
               await flushRunStats("partial");
               break;
+            }
+            if (e instanceof SearchApiKeyError) {
+              send({ type: "error", message: `🔑 API-Key Fehler (403): ${e.message} — Scan abgebrochen. Bitte Gemini API-Key in Vercel prüfen und sicherstellen, dass "Generative Language API" + Google Search Grounding aktiviert sind.` });
+              await flushRunStats("failed");
+              break;
+            }
+            if (e instanceof SearchRateLimitError) {
+              send({ type: "error", message: `Rate-Limit auch nach Retry erreicht — Query übersprungen.` });
+              continue;
             }
             send({ type: "error", message: (e as Error).message?.slice(0, 200) ?? "Unbekannter Fehler" });
           }

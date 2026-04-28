@@ -10,6 +10,20 @@ export class SearchBudgetExceededError extends Error {
   }
 }
 
+export class SearchApiKeyError extends Error {
+  constructor(detail: string) {
+    super(`Gemini API-Key ungültig oder fehlt Berechtigung: ${detail}`);
+    this.name = "SearchApiKeyError";
+  }
+}
+
+export class SearchRateLimitError extends Error {
+  constructor(public readonly retryAfterMs: number) {
+    super(`Gemini Rate-Limit erreicht — warte ${Math.round(retryAfterMs / 1000)}s`);
+    this.name = "SearchRateLimitError";
+  }
+}
+
 const REGION_LABELS: Record<SearchRegion, string> = {
   deutschland: "Deutschland",
   hessen: "Hessen",
@@ -114,7 +128,17 @@ Maximal 10 Ergebnisse. Keine Einleitung, nur JSON.`;
     clearTimeout(timeout);
 
     if (!res.ok) {
-      throw new Error(`Gemini search failed: ${res.status} ${res.statusText}`);
+      const errBody = await res.json().catch(() => ({}));
+      const errMsg = (errBody as { error?: { message?: string } }).error?.message ?? res.statusText;
+      if (res.status === 403) {
+        throw new SearchApiKeyError(errMsg);
+      }
+      if (res.status === 429) {
+        // Gemini rate-limit window is 60s; retry-delay header may give exact value
+        const retryAfter = Number(res.headers.get("Retry-After") ?? 60) * 1000;
+        throw new SearchRateLimitError(retryAfter);
+      }
+      throw new Error(`Gemini search failed: ${res.status} ${errMsg}`);
     }
 
     const data = await res.json();
