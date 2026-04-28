@@ -824,40 +824,54 @@ echo   DPMA Register-Agent
 echo ========================================
 echo.
 
-:: Prüfe ob Node.js installiert ist (einzelne if-exist Checks — kein for-Loop, kein Leerzeichen-Problem)
+:: Node.js prüfen — zuerst PATH, dann bekannte Installationspfade
 where node >nul 2>&1
 if %errorlevel% equ 0 goto :node_ok
-if exist "%ProgramFiles%\\nodejs\\node.exe"         set "PATH=%ProgramFiles%\\nodejs;%PATH%"         & goto :node_ok
-if exist "%ProgramFiles(x86)%\\nodejs\\node.exe"   set "PATH=%ProgramFiles(x86)%\\nodejs;%PATH%"   & goto :node_ok
-if exist "%APPDATA%\\nvm\\current\\node.exe"        set "PATH=%APPDATA%\\nvm\\current;%PATH%"        & goto :node_ok
-if exist "%LOCALAPPDATA%\\nvm\\current\\node.exe"   set "PATH=%LOCALAPPDATA%\\nvm\\current;%PATH%"   & goto :node_ok
-
+if exist "%ProgramFiles%\\nodejs\\node.exe" (
+  set "PATH=%ProgramFiles%\\nodejs;%PATH%"
+  goto :node_ok
+)
+if exist "%ProgramFiles(x86)%\\nodejs\\node.exe" (
+  set "PATH=%ProgramFiles(x86)%\\nodejs;%PATH%"
+  goto :node_ok
+)
+if exist "%APPDATA%\\nvm\\current\\node.exe" (
+  set "PATH=%APPDATA%\\nvm\\current;%PATH%"
+  goto :node_ok
+)
+if exist "%LOCALAPPDATA%\\nvm\\current\\node.exe" (
+  set "PATH=%LOCALAPPDATA%\\nvm\\current;%PATH%"
+  goto :node_ok
+)
 echo [FEHLER] Node.js wurde nicht gefunden.
-echo.
-echo Bitte versuche:
-echo   1. Dieses Fenster schliessen und neu oeffnen
-echo   2. Node.js neu installieren von https://nodejs.org
-echo      (Option "Add to PATH" muss aktiviert sein)
+echo Bitte Node.js von https://nodejs.org installieren
+echo und dann dieses Fenster neu oeffnen.
 echo.
 pause
 exit /b 1
 
 :node_ok
 for /f "tokens=*" %%v in ('node --version 2^>nul') do set NODE_VER=%%v
-echo [OK] Node.js %NODE_VER% gefunden.
+echo [OK] Node.js %NODE_VER%
 
-:: Prüfe ob Git installiert ist
+:: Git prüfen
 where git >nul 2>&1
 if %errorlevel% equ 0 goto :git_ok
-if exist "%ProgramFiles%\\Git\\cmd\\git.exe"              set "PATH=%ProgramFiles%\\Git\\cmd;%PATH%"              & goto :git_ok
-if exist "%ProgramFiles(x86)%\\Git\\cmd\\git.exe"        set "PATH=%ProgramFiles(x86)%\\Git\\cmd;%PATH%"        & goto :git_ok
-if exist "%LOCALAPPDATA%\\Programs\\Git\\cmd\\git.exe"   set "PATH=%LOCALAPPDATA%\\Programs\\Git\\cmd;%PATH%"   & goto :git_ok
-
+if exist "%ProgramFiles%\\Git\\cmd\\git.exe" (
+  set "PATH=%ProgramFiles%\\Git\\cmd;%PATH%"
+  goto :git_ok
+)
+if exist "%ProgramFiles(x86)%\\Git\\cmd\\git.exe" (
+  set "PATH=%ProgramFiles(x86)%\\Git\\cmd;%PATH%"
+  goto :git_ok
+)
+if exist "%LOCALAPPDATA%\\Programs\\Git\\cmd\\git.exe" (
+  set "PATH=%LOCALAPPDATA%\\Programs\\Git\\cmd;%PATH%"
+  goto :git_ok
+)
 echo [FEHLER] Git wurde nicht gefunden.
-echo.
-echo Bitte versuche:
-echo   1. Dieses Fenster schliessen und neu oeffnen
-echo   2. Git neu installieren von https://git-scm.com/download/win
+echo Bitte Git von https://git-scm.com/download/win installieren
+echo und dann dieses Fenster neu oeffnen.
 echo.
 pause
 exit /b 1
@@ -865,37 +879,32 @@ exit /b 1
 :git_ok
 echo [OK] Git gefunden.
 
-:: Projekt-Ordner erstellen falls nötig
+:: Projekt einrichten
 if not exist "C:\\dpma-agent\\package.json" (
   echo [1/3] Projekt wird heruntergeladen...
   mkdir "C:\\dpma-agent" 2>nul
   cd /d "C:\\dpma-agent"
-  git clone ${repo} . 2>nul
-  if %errorlevel% neq 0 (
-    echo Projekt existiert bereits, aktualisiere...
-    git pull 2>nul
-  )
+  git clone ${repo} .
   echo [2/3] Abhaengigkeiten werden installiert...
   call npm install
 ) else (
   cd /d "C:\\dpma-agent"
-  echo Projekt gefunden. Aktualisiere...
-  git pull 2>nul
+  echo Projekt aktualisieren...
+  git pull
   call npm install --silent
 )
 
 echo [3/3] Agent wird gestartet...
 echo.
-echo Der Agent wartet jetzt auf Scan-Auftraege.
+echo Der Agent wartet auf Scan-Auftraege.
 echo Dieses Fenster offen lassen!
-echo Zum Stoppen: Strg+C oder Fenster schliessen.
+echo Zum Stoppen: Strg+C
 echo.
 
-set SUPABASE_URL=${sbUrl}
-set SUPABASE_SERVICE_ROLE_KEY=${sbKey}
-set GEMINI_API_KEY=${gemKey}
+set "SUPABASE_URL=${sbUrl}"
+set "SUPABASE_SERVICE_ROLE_KEY=${sbKey}"
+set "GEMINI_API_KEY=${gemKey}"
 
-:: tsx direkt aus node_modules aufrufen — kein npx nötig
 call "C:\\dpma-agent\\node_modules\\.bin\\tsx.cmd" scripts\\dpma-agent.ts
 
 pause
