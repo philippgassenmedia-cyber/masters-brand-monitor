@@ -825,14 +825,33 @@ echo ========================================
 echo.
 
 :: Prüfe ob Node.js installiert ist
+:: Zuerst PATH prüfen, dann bekannte Installationspfade
 where node >nul 2>&1
-if %errorlevel% neq 0 (
-  echo [FEHLER] Node.js ist nicht installiert.
-  echo Bitte installiere Node.js von https://nodejs.org
-  echo.
-  pause
-  exit /b 1
+if %errorlevel% equ 0 goto :node_ok
+
+:: Fallback: Häufige Installationspfade (Windows Store, nvm, offizieller Installer)
+set "NODE_PATHS=%ProgramFiles%\\nodejs\\node.exe;%APPDATA%\\nvm\\current\\node.exe;%LOCALAPPDATA%\\Microsoft\\WindowsApps\\node.exe;%ProgramFiles(x86)%\\nodejs\\node.exe"
+for %%P in (%NODE_PATHS%) do (
+  if exist "%%P" (
+    for %%D in ("%%P") do set "PATH=%%~dpD;%PATH%"
+    goto :node_ok
+  )
 )
+
+echo [FEHLER] Node.js wurde nicht gefunden.
+echo.
+echo Node.js ist moeglicherweise installiert aber nicht im PATH.
+echo Bitte versuche:
+echo   1. Dieses Fenster schliessen und neu oeffnen
+echo   2. Oder Node.js neu installieren von https://nodejs.org
+echo      (Option "Add to PATH" muss aktiviert sein)
+echo.
+pause
+exit /b 1
+
+:node_ok
+for /f "tokens=*" %%v in ('node --version 2^>nul') do set NODE_VER=%%v
+echo [OK] Node.js gefunden: %NODE_VER%
 
 :: Prüfe ob Git installiert ist
 where git >nul 2>&1
