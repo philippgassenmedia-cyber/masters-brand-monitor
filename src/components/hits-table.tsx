@@ -21,6 +21,14 @@ function scoreBadge(score: number | null) {
   return "bg-emerald-100/70 text-emerald-900";
 }
 
+function detectSector(reasoning: string | null): "immobilien" | "beratung" | null {
+  if (!reasoning) return null;
+  const r = reasoning.toLowerCase();
+  if (/immobili|makler|hausverwalt|mietverwalt|bautr|property|real.estate|gewerbeimmobil|wohnungsvermittl/.test(r)) return "immobilien";
+  if (/unternehmensberatung|consulting|management.beratung|business.consult/.test(r)) return "beratung";
+  return null;
+}
+
 export interface HitGroupRow {
   key: string;
   title: string;
@@ -117,6 +125,18 @@ export function HitsTable({
                         </span>
                       )}
                     </div>
+                    {(() => {
+                      const sector = detectSector(g.reasoning);
+                      return sector ? (
+                        <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                          sector === "immobilien"
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-sky-100 text-sky-800"
+                        }`}>
+                          {sector === "immobilien" ? "Immobilien" : "Beratung"}
+                        </span>
+                      ) : null;
+                    })()}
                     {g.city && (
                       <div className="mt-0.5 flex items-center gap-1 text-[11px] text-stone-400">
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">

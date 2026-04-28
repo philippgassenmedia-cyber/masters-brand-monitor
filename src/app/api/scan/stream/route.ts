@@ -44,7 +44,8 @@ function buildQueries(params: ScanParams): Array<{ query: string; city?: string 
     queries.push({ query: params.freeText });
   }
 
-  // ── Immobilien (Primär-Fokus) ──────────────────────────────────────────────
+  // ── Immobilien (Primär-Fokus, Quick + Deep) ───────────────────────────────
+  queries.push({ query: `"${brand}" Immobilien` });
   queries.push({ query: `"${brand}" Immobilien Makler` });
   queries.push({ query: `"${brand}" Immobilien GmbH` });
   queries.push({ query: `"${brand}" Hausverwaltung` });
@@ -58,19 +59,23 @@ function buildQueries(params: ScanParams): Array<{ query: string; city?: string 
   queries.push({ query: `"${brand}" Immobilien Verwaltung` });
   queries.push({ query: `"${brand}" Mietverwaltung` });
   queries.push({ query: `"${brand}" Immobilienberatung` });
+  queries.push({ query: `"${brand}" Immobiliengesellschaft` });
 
-  // ── Beratung / Consulting (Sekundär) ──────────────────────────────────────
+  // ── Beratung / Consulting (Sekundär — nur Quick: Unternehmensberatung) ────
   queries.push({ query: `"${brand}" Unternehmensberatung` });
-  queries.push({ query: `"${brand}" Consulting` });
 
   if (params.mode === "deep") {
+    // Weitere Immobilien-Queries
     queries.push({ query: `"${brand}" Wohnimmobilien` });
     queries.push({ query: `"${brand}" Neubau Immobilien` });
     queries.push({ query: `"${brand}" Gewerbemakler` });
     queries.push({ query: `"${brand}" Immobilien Vermietung` });
     queries.push({ query: `"${brand}" Investment Immobilien` });
-    queries.push({ query: `"${brand}" Beratung GmbH` });
+    queries.push({ query: `"${brand}" Immobilien Verwaltung GmbH` });
     queries.push({ query: `"${brand}" Facility Management` });
+    // Consulting nur im Deep-Modus
+    queries.push({ query: `"${brand}" Consulting` });
+    queries.push({ query: `"${brand}" Beratung GmbH` });
     queries.push({ query: `"${brand}" Vermögensverwaltung` });
   }
 
@@ -80,7 +85,7 @@ function buildQueries(params: ScanParams): Array<{ query: string; city?: string 
     queries.push({ query: `"${brand}" Makler ${city}`, city });
     if (params.mode === "deep") {
       queries.push({ query: `"${brand}" Hausverwaltung ${city}`, city });
-      queries.push({ query: `"${brand}" Beratung ${city}`, city });
+      queries.push({ query: `"${brand}" Immobiliengesellschaft ${city}`, city });
     }
   }
 

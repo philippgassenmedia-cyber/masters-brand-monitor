@@ -17,6 +17,14 @@ const STATUS_LABEL: Record<HitStatus, string> = {
   resolved: "Erledigt",
 };
 
+function detectSector(reasoning: string | null): "immobilien" | "beratung" | null {
+  if (!reasoning) return null;
+  const r = reasoning.toLowerCase();
+  if (/immobili|makler|hausverwalt|mietverwalt|bautr|property|real.estate|gewerbeimmobil|wohnungsvermittl/.test(r)) return "immobilien";
+  if (/unternehmensberatung|consulting|management.beratung|business.consult/.test(r)) return "beratung";
+  return null;
+}
+
 function scoreBg(score: number | null) {
   if (score === null) return "bg-stone-100 text-stone-500";
   if (score >= 7) return "bg-rose-100 text-rose-800";
@@ -176,6 +184,18 @@ export default async function AllHitsPage({
                         )}
                       </div>
                       <div className="text-[11px] text-stone-400">{h.domain}</div>
+                      {(() => {
+                        const sector = detectSector(h.ai_reasoning);
+                        return sector ? (
+                          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${
+                            sector === "immobilien"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-sky-100 text-sky-800"
+                          }`}>
+                            {sector === "immobilien" ? "Immobilien" : "Beratung"}
+                          </span>
+                        ) : null;
+                      })()}
                       {city && (
                         <div className="mt-0.5 flex items-center gap-1 text-[11px] text-stone-400">
                           <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0">

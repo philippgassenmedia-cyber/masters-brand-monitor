@@ -34,15 +34,17 @@ function buildSystemPrompt(): string {
 eine potenzielle Verletzung der geschützten Wortmarke "${BRAND_NAME}" darstellt.
 
 Die Marke ist geschützt — PRIORITÄT in dieser Reihenfolge:
-1. ⭐ IMMOBILIEN (Hauptbereich): Makler, Hausverwaltung, Immobilienvermittlung, Bauträger,
-   Projektentwicklung, Vermietung, Mietverwaltung, Wohnungsvermittlung, Gewerbeimmobilien,
-   Property Management, Wohnimmobilien, Real Estate, Gewerbemakler, Neubau
-2. UNTERNEHMENSBERATUNG: Consulting, Management-Beratung, Business Consulting
-3. ÜBERSCHNEIDUNGSFELDER: Immobilienberatung, Investment Immobilien, Facility Management,
-   Vermögensverwaltung (nur wenn Immobilien-Bezug erkennbar)
+1. ⭐⭐ IMMOBILIEN (Hauptbereich, höchste Priorität): Makler, Hausverwaltung, Immobilienvermittlung,
+   Bauträger, Projektentwicklung, Vermietung, Mietverwaltung, Wohnungsvermittlung, Gewerbeimmobilien,
+   Property Management, Wohnimmobilien, Real Estate, Gewerbemakler, Neubau → Score 8–10
+2. ⭐ IMMOBILIEN-NAHE BERATUNG: Immobilienberatung, Investment Immobilien, Facility Management,
+   Vermögensverwaltung MIT Immobilien-Bezug → Score 6–8
+3. REINE UNTERNEHMENSBERATUNG (kein Immobilien-Bezug): Consulting, Management-Beratung →
+   Score 5–6 (geringere Priorität, nicht der Kernbereich der Marke)
 
-WICHTIG: Immobilienfirmen haben höchste Priorität. Lieber einmal mehr flaggen als zu wenig.
+WICHTIG: Immobilienfirmen haben ABSOLUTE höchste Priorität. Lieber einmal mehr flaggen als zu wenig.
 Jede Firma die "${BRAND_NAME}" im Namen trägt UND im Immobilienbereich tätig ist → Score ≥ 8.
+Reine Beratungsfirmen OHNE jeden Immobilien-Bezug → maximal Score 6.
 
 ═══ MARKENINHABER ═══
 Inhaber: ${BRAND_OWNER}
@@ -213,8 +215,8 @@ export async function analyzeHitWithGemini(input: {
     }
     parsed.is_violation = true;
   } else if (nameHasBrand && hasBeratungContext) {
-    // Firma mit Brand im Beratungs-Kontext
-    parsed.score = Math.max(parsed.score, 7);
+    // Firma mit Brand im Beratungs-Kontext — sekundärer Bereich, Score-Deckel bei 6
+    parsed.score = Math.max(parsed.score, 6);
     if (parsed.violation_category === "not_relevant" || parsed.violation_category === "generic_use") {
       parsed.violation_category = "suspected_violation";
     }
@@ -223,8 +225,8 @@ export async function analyzeHitWithGemini(input: {
     // Firma mit Brand, Kontext unklar
     parsed.score = Math.max(parsed.score, 5);
   } else if (domainHasBrand && hasBeratungContext) {
-    // Domain mit Brand + Beratung
-    parsed.score = Math.max(parsed.score, 6);
+    // Domain mit Brand + reine Beratung (kein Immo)
+    parsed.score = Math.max(parsed.score, 5);
     parsed.is_violation = true;
   } else if (domainHasBrand) {
     parsed.score = Math.max(parsed.score, 4);
