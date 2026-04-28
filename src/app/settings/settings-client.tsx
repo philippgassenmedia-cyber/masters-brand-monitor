@@ -778,6 +778,8 @@ function DpmaAgentSection() {
   const [open, setOpen] = useState(false);
   const [os, setOs] = useState<"windows" | "mac">("windows");
   const [config, setConfig] = useState<{ NEXT_PUBLIC_SUPABASE_URL: string; SUPABASE_SERVICE_ROLE_KEY: string; GEMINI_API_KEY: string } | null>(null);
+  const [agentToken, setAgentToken] = useState<string | null>(null);
+  const [appUrl, setAppUrl] = useState<string | null>(null);
   const [configLoading, setConfigLoading] = useState(false);
   const [configError, setConfigError] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState(false);
@@ -790,6 +792,8 @@ function DpmaAgentSection() {
       if (!res.ok) throw new Error("Konfiguration konnte nicht geladen werden");
       const data = await res.json();
       setConfig(data.config);
+      setAgentToken(data.agentToken ?? null);
+      setAppUrl(data.appUrl ?? null);
     } catch (e) {
       setConfigError((e as Error).message);
     } finally {
@@ -804,7 +808,7 @@ function DpmaAgentSection() {
 
   // Generiert eine ausführbare Datei die man einfach doppelklickt
   const downloadScript = () => {
-    if (!config) return;
+    if (!config || !agentToken || !appUrl) return;
     const { NEXT_PUBLIC_SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey, GEMINI_API_KEY: gemKey } = config;
     const repo = "https://github.com/philippgassenmedia-cyber/masters-brand-monitor.git";
 
@@ -823,6 +827,11 @@ echo ========================================
 echo   DPMA Register-Agent
 echo ========================================
 echo.
+
+:: Dieses Script muss nur einmal heruntergeladen werden.
+:: API-Keys werden automatisch vom Server geholt.
+set "APP_URL=${appUrl}"
+set "AGENT_TOKEN=${agentToken}"
 
 :: Node.js prüfen — zuerst PATH, dann bekannte Installationspfade
 where node >nul 2>&1
@@ -894,16 +903,28 @@ if not exist "C:\\dpma-agent\\package.json" (
   call npm install --silent
 )
 
-echo [3/3] Agent wird gestartet...
+:: Aktuelle API-Keys vom Server holen (kein Neudownload noetig bei Key-Aenderungen)
+echo Lade Konfiguration vom Server...
+powershell -NoProfile -Command "$r=try{(Invoke-WebRequest '%APP_URL%/api/agent/config?token=%AGENT_TOKEN%' -UseBasicParsing -TimeoutSec 15).Content | ConvertFrom-Json}catch{$null}; if($r){('set \"SUPABASE_URL='+$r.SUPABASE_URL+'\"'),('set \"SUPABASE_SERVICE_ROLE_KEY='+$r.SUPABASE_SERVICE_ROLE_KEY+'\"'),('set \"GEMINI_API_KEY='+$r.GEMINI_API_KEY+'\"') | Out-File -FilePath $env:TEMP\\agentenv.bat -Encoding ASCII}" 2>nul
+
+if not exist "%TEMP%\\agentenv.bat" (
+  echo [WARNUNG] Server nicht erreichbar - verwende gespeicherte Keys.
+  set "SUPABASE_URL=${sbUrl}"
+  set "SUPABASE_SERVICE_ROLE_KEY=${sbKey}"
+  set "GEMINI_API_KEY=${gemKey}"
+  goto :start_agent
+)
+call "%TEMP%\\agentenv.bat"
+del "%TEMP%\\agentenv.bat" >nul 2>&1
+echo [OK] Konfiguration geladen.
+
+:start_agent
 echo.
+echo [3/3] Agent wird gestartet...
 echo Der Agent wartet auf Scan-Auftraege.
 echo Dieses Fenster offen lassen!
 echo Zum Stoppen: Strg+C
 echo.
-
-set "SUPABASE_URL=${sbUrl}"
-set "SUPABASE_SERVICE_ROLE_KEY=${sbKey}"
-set "GEMINI_API_KEY=${gemKey}"
 
 call "C:\\dpma-agent\\node_modules\\.bin\\tsx.cmd" scripts\\dpma-agent.ts
 

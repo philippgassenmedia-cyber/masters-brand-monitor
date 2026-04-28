@@ -8,6 +8,7 @@ import { groupHits, resolveCompany } from "@/lib/dedupe";
 import { HitsTable, type HitGroupRow } from "@/components/hits-table";
 import { RunningBanner } from "@/components/running-banner";
 import { EnrichHitsButton } from "@/components/enrich-hits-button";
+import { AgentDownloadButton } from "@/components/agent-download-button";
 import type { Hit, HitStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -297,7 +298,10 @@ export default async function DashboardPage({
       <HitsTable groups={groupRows} totalUrls={rows.length} />
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <EnrichHitsButton />
+        <div className="flex flex-wrap items-center gap-2">
+          <EnrichHitsButton />
+          <AgentDownloadButton />
+        </div>
         <Link
           href="/hits"
           className="text-xs text-stone-500 hover:text-stone-800 hover:underline"
