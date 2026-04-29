@@ -60,63 +60,38 @@ function AgentCallout() {
   };
 
   return (
-    <section className="glass mb-3 overflow-hidden p-5">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-4">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-stone-900 text-xl">
-            🤖
-          </div>
-          <div>
-            <div className="text-sm font-semibold text-stone-900">Lokaler DPMA-Agent erforderlich</div>
-            <p className="mt-0.5 text-xs text-stone-600">
-              Das DPMA-Register blockiert Cloud-Zugriffe. Der Agent läuft auf deinem PC und überträgt
-              Ergebnisse automatisch — nach jedem Cluster sofort sichtbar.
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-stone-400">Voraussetzungen:</span>
-              {PREREQS.map((p) => (
-                <a
-                  key={p.name}
-                  href={p.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 rounded-full border border-stone-200 bg-white/70 px-2.5 py-0.5 text-[11px] font-medium text-stone-700 transition hover:bg-white"
-                >
-                  {p.name}
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-                    <polyline points="15 3 21 3 21 9"/>
-                    <line x1="10" y1="14" x2="21" y2="3"/>
-                  </svg>
-                </a>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          <button
-            onClick={download}
-            disabled={loading}
-            className="flex items-center gap-2 rounded-full bg-stone-900 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] transition hover:bg-stone-800 disabled:opacity-60"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-stone-200/70 bg-white/50 px-4 py-2.5">
+      <div className="flex items-center gap-2.5 text-xs text-stone-600">
+        <span className="text-base">🤖</span>
+        <span>
+          <span className="font-semibold text-stone-800">Lokaler Agent erforderlich</span>
+          {" · "}Voraussetzungen:
+        </span>
+        {PREREQS.map((p) => (
+          <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-0.5 text-stone-500 underline hover:text-stone-800">
+            {p.name}
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
             </svg>
-            {loading ? "Wird vorbereitet…" : downloaded ? "Heruntergeladen ✓" : "Agent herunterladen"}
-          </button>
-          <Link
-            href="/settings#dpma-agent"
-            className="text-[11px] text-stone-400 underline hover:text-stone-700"
-          >
-            Anleitung & Details →
-          </Link>
-          {error && <p className="text-[11px] text-rose-600">{error}</p>}
-        </div>
+          </a>
+        ))}
+        <Link href="/settings" className="text-stone-400 hover:text-stone-700">Anleitung →</Link>
       </div>
-    </section>
+      <div className="flex items-center gap-2">
+        {error && <span className="text-[11px] text-rose-600">{error}</span>}
+        <button
+          onClick={download}
+          disabled={loading}
+          className="flex items-center gap-1.5 rounded-full bg-stone-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-stone-800 disabled:opacity-60"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          {loading ? "Lädt…" : downloaded ? "Heruntergeladen ✓" : "Agent herunterladen"}
+        </button>
+      </div>
+    </div>
   );
 }
 
