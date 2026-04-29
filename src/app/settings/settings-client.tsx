@@ -505,6 +505,8 @@ export function SettingsClient({
           {pending ? "Speichere…" : "Einstellungen speichern"}
         </button>
       </div>
+
+      <AdminConsoleGate />
     </div>
   );
 }
@@ -1260,5 +1262,399 @@ function EmailRecipientsSection() {
         <span className="font-semibold">Gmail-Versand:</span> Trage in den Env-Variablen <code>GMAIL_USER</code> und <code>GMAIL_APP_PASSWORD</code> ein.
       </div>
     </section>
+  );
+}
+
+// ── Admin Console ────────────────────────────────────────────
+
+type AdminStatus = {
+  keys: Record<string, string>;
+  keyOverrides: Record<string, boolean>;
+  status: {
+    gemini: { status: string; latency: number; error: string };
+    supabase: { status: string; latency: number; error: string };
+  };
+  usage30d: Record<string, number>;
+  usage7d: Record<string, number>;
+};
+
+const KEY_LABELS: Record<string, string> = {
+  GEMINI_API_KEY: "GEMINI_API_KEY",
+  SUPABASE_URL: "SUPABASE_URL",
+  SUPABASE_SERVICE_ROLE_KEY: "SUPABASE_SERVICE_ROLE_KEY",
+};
+
+const USAGE_LABELS_ADMIN: Record<string, string> = {
+  gemini_search: "GEMINI_SEARCH",
+  gemini_analyze: "GEMINI_ANALYZE",
+  gemini_dpma: "GEMINI_DPMA",
+  gemini_resolve: "GEMINI_RESOLVE",
+  gemini_parse: "GEMINI_PARSE",
+};
+
+function maskKey(val: string): string {
+  if (!val) return "—";
+  if (val.length <= 12) return "•".repeat(val.length);
+  return val.slice(0, 6) + "•".repeat(Math.min(val.length - 10, 24)) + val.slice(-4);
+}
+
+function UsageBar({ value, max }: { value: number; max: number }) {
+  const pct = max > 0 ? Math.round((value / max) * 16) : 0;
+  const filled = "█".repeat(pct);
+  const empty = "░".repeat(16 - pct);
+  return <span className="text-emerald-500">{filled}<span className="text-stone-700">{empty}</span></span>;
+}
+
+function AdminConsole({ password, onLock }: { password: string; onLock: () => void }) {
+  const [data, setData] = useState<AdminStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [editPending, setEditPending] = useState(false);
+  const [editMsg, setEditMsg] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [changePw, setChangePw] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwMsg, setPwMsg] = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/admin/status", { headers: { "x-admin-password": password } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setData(await r.json());
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const copyKey = (key: string, val: string) => {
+    navigator.clipboard.writeText(val);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 1500);
+  };
+
+  const saveKey = async (key: string) => {
+    setEditPending(true);
+    setEditMsg(null);
+    try {
+      const r = await fetch("/api/admin/keys", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "x-admin-password": password },
+        body: JSON.stringify({ key, value: editValue }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setEditMsg("Gespeichert");
+      setEditing(null);
+      await load();
+    } catch (e) {
+      setEditMsg((e as Error).message);
+    } finally {
+      setEditPending(false);
+    }
+  };
+
+  const changePassword = async () => {
+    setPwMsg(null);
+    try {
+      const r = await fetch("/api/admin/verify", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: pwCurrent, newPassword: pwNew }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error ?? "Fehler");
+      setPwMsg("✓ Passwort geändert");
+      setPwCurrent(""); setPwNew("");
+      setTimeout(() => { setChangePw(false); setPwMsg(null); }, 2000);
+    } catch (e) {
+      setPwMsg(`✗ ${(e as Error).message}`);
+    }
+  };
+
+  const maxUsage = data ? Math.max(1, ...Object.values(data.usage30d)) : 1;
+
+  return (
+    <div className="mt-10 rounded-2xl border border-stone-800 bg-stone-950 p-6 font-mono text-sm">
+      {/* Header */}
+      <div className="mb-5 flex items-center justify-between border-b border-stone-800 pb-4">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-bold tracking-[0.3em] text-emerald-500">◈ ADMIN CONSOLE</span>
+          <span className="rounded bg-stone-800 px-2 py-0.5 text-[10px] text-stone-500">v1</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setChangePw(!changePw)}
+            className="text-[11px] text-stone-500 hover:text-stone-300"
+          >
+            {changePw ? "ABBRECHEN" : "PW ÄNDERN"}
+          </button>
+          <button onClick={load} className="text-[11px] text-stone-500 hover:text-emerald-400">REFRESH</button>
+          <button onClick={onLock} className="text-[11px] text-stone-500 hover:text-rose-400">
+            ■ LOCK
+          </button>
+        </div>
+      </div>
+
+      {/* Change password */}
+      {changePw && (
+        <div className="mb-5 border-b border-stone-800 pb-4">
+          <div className="mb-2 text-[10px] tracking-widest text-stone-500">// PASSWORT ÄNDERN</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="password"
+              placeholder="Aktuelles Passwort"
+              value={pwCurrent}
+              onChange={(e) => setPwCurrent(e.target.value)}
+              className="h-8 rounded border border-stone-700 bg-stone-900 px-3 text-xs text-stone-200 outline-none focus:border-emerald-600"
+            />
+            <input
+              type="password"
+              placeholder="Neues Passwort"
+              value={pwNew}
+              onChange={(e) => setPwNew(e.target.value)}
+              className="h-8 rounded border border-stone-700 bg-stone-900 px-3 text-xs text-stone-200 outline-none focus:border-emerald-600"
+            />
+            <button
+              onClick={changePassword}
+              className="h-8 rounded bg-emerald-700 px-4 text-xs font-semibold text-white hover:bg-emerald-600"
+            >
+              SPEICHERN
+            </button>
+            {pwMsg && (
+              <span className={`text-xs ${pwMsg.startsWith("✓") ? "text-emerald-400" : "text-rose-400"}`}>
+                {pwMsg}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div className="py-8 text-center text-xs text-stone-600">
+          <span className="animate-pulse">Lade Systemstatus…</span>
+        </div>
+      )}
+      {error && <div className="py-4 text-xs text-rose-400">✗ {error}</div>}
+
+      {data && (
+        <div className="space-y-6">
+          {/* API Keys */}
+          <div>
+            <div className="mb-3 text-[10px] tracking-widest text-stone-500">// API KEYS</div>
+            <div className="space-y-3">
+              {Object.entries(KEY_LABELS).map(([key, label]) => {
+                const val = data.keys[key] ?? "";
+                const isOverride = data.keyOverrides[key];
+                const isRevealed = revealed[key];
+                const isEditing = editing === key;
+                return (
+                  <div key={key} className="rounded-lg border border-stone-800 bg-stone-900/60 p-3">
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <span className="text-[10px] font-bold text-stone-400">{label}</span>
+                      {isOverride && (
+                        <span className="rounded bg-amber-900/50 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">
+                          DB OVERRIDE
+                        </span>
+                      )}
+                    </div>
+                    {isEditing ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          autoFocus
+                          type="text"
+                          defaultValue={val}
+                          onChange={(e) => setEditValue(e.target.value)}
+                          className="h-7 flex-1 rounded border border-stone-600 bg-stone-800 px-2 text-xs text-emerald-300 outline-none focus:border-emerald-600 font-mono"
+                          placeholder="Leer lassen = ENV-Variable verwenden"
+                        />
+                        <button
+                          onClick={() => saveKey(key)}
+                          disabled={editPending}
+                          className="rounded bg-emerald-700 px-3 py-1 text-[10px] font-bold text-white hover:bg-emerald-600 disabled:opacity-50"
+                        >
+                          {editPending ? "…" : "SAVE"}
+                        </button>
+                        <button onClick={() => setEditing(null)} className="text-[10px] text-stone-500 hover:text-stone-300">
+                          ✗
+                        </button>
+                        {editMsg && <span className="text-[10px] text-emerald-400">{editMsg}</span>}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <span className="flex-1 truncate text-xs text-amber-400/80">
+                          <span className="text-stone-600 mr-1">›</span>
+                          {isRevealed ? val || "—" : maskKey(val)}
+                        </span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            onClick={() => setRevealed((r) => ({ ...r, [key]: !r[key] }))}
+                            className="rounded px-1.5 py-0.5 text-[9px] text-stone-600 hover:text-stone-300"
+                            title={isRevealed ? "Ausblenden" : "Anzeigen"}
+                          >
+                            {isRevealed ? "HIDE" : "SHOW"}
+                          </button>
+                          <button
+                            onClick={() => copyKey(key, val)}
+                            className="rounded px-1.5 py-0.5 text-[9px] text-stone-600 hover:text-emerald-400"
+                          >
+                            {copied === key ? "✓" : "COPY"}
+                          </button>
+                          <button
+                            onClick={() => { setEditing(key); setEditValue(val); setEditMsg(null); }}
+                            className="rounded px-1.5 py-0.5 text-[9px] text-stone-600 hover:text-amber-400"
+                          >
+                            EDIT
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-2 text-[10px] text-stone-700">
+              EDIT speichert einen DB-Override (überschreibt Env-Variable). Leer lassen = Env-Variable nutzen.
+            </p>
+          </div>
+
+          {/* Status */}
+          <div>
+            <div className="mb-3 text-[10px] tracking-widest text-stone-500">// SYSTEM STATUS</div>
+            <div className="space-y-2">
+              {[
+                { id: "gemini", label: "GEMINI_API", s: data.status.gemini },
+                { id: "supabase", label: "SUPABASE_DB", s: data.status.supabase },
+              ].map(({ id, label, s }) => (
+                <div key={id} className="flex items-center gap-4 rounded-lg border border-stone-800 bg-stone-900/60 px-3 py-2">
+                  <span className={`text-base leading-none ${s.status === "online" ? "text-emerald-500" : s.status === "error" ? "text-rose-500" : "text-stone-500"}`}>
+                    {s.status === "online" ? "●" : s.status === "error" ? "●" : "○"}
+                  </span>
+                  <span className="w-36 text-xs font-bold text-stone-300">{label}</span>
+                  <span className={`w-16 text-xs font-bold ${s.status === "online" ? "text-emerald-400" : s.status === "error" ? "text-rose-400" : "text-stone-500"}`}>
+                    {s.status.toUpperCase()}
+                  </span>
+                  <span className="text-xs text-stone-600">{s.latency}ms</span>
+                  {s.error && <span className="truncate text-[10px] text-rose-600">{s.error}</span>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Usage */}
+          <div>
+            <div className="mb-3 flex items-center gap-4 text-[10px] tracking-widest text-stone-500">
+              <span>// API USAGE</span>
+              <span className="text-stone-700">7D / 30D</span>
+            </div>
+            <div className="space-y-1.5">
+              {Object.entries(USAGE_LABELS_ADMIN).map(([provider, label]) => {
+                const v30 = data.usage30d[provider] ?? 0;
+                const v7 = data.usage7d[provider] ?? 0;
+                return (
+                  <div key={provider} className="flex items-center gap-3">
+                    <span className="w-36 text-[10px] text-stone-400">{label}</span>
+                    <UsageBar value={v30} max={maxUsage} />
+                    <span className="w-16 text-right text-xs tabular-nums text-stone-400">
+                      {v30.toLocaleString("de-DE")}
+                    </span>
+                    <span className="text-[10px] text-stone-700">
+                      ({v7.toLocaleString("de-DE")} 7d)
+                    </span>
+                  </div>
+                );
+              })}
+              {Object.keys(USAGE_LABELS_ADMIN).every((k) => !data.usage30d[k]) && (
+                <div className="text-xs text-stone-700">Keine Daten für die letzten 30 Tage.</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AdminConsoleGate() {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [input, setInput] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [isSetup, setIsSetup] = useState(false);
+
+  const unlock = async () => {
+    setPending(true);
+    setError(null);
+    try {
+      const r = await fetch("/api/admin/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: input }),
+      });
+      const d = await r.json();
+      if (!d.ok) throw new Error(d.error ?? "Fehler");
+      setPassword(input);
+      setIsSetup(d.setup ?? false);
+      setOpen(true);
+      setInput("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  if (open && password) {
+    return (
+      <AdminConsole
+        password={password}
+        onLock={() => { setOpen(false); setPassword(""); }}
+      />
+    );
+  }
+
+  return (
+    <div className="mt-10 flex flex-col items-center gap-3">
+      <div className="flex items-center gap-3">
+        <div className="h-px w-16 bg-stone-200" />
+        <span className="text-[10px] uppercase tracking-widest text-stone-400">System</span>
+        <div className="h-px w-16 bg-stone-200" />
+      </div>
+      <form
+        onSubmit={(e) => { e.preventDefault(); unlock(); }}
+        className="flex items-center gap-2"
+      >
+        <input
+          type="password"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder="Admin-Passwort eingeben…"
+          className="h-8 w-56 rounded-full border border-stone-200 bg-white/50 px-4 text-xs text-stone-700 outline-none focus:border-stone-400"
+        />
+        <button
+          type="submit"
+          disabled={pending || !input}
+          className="h-8 rounded-full border border-stone-200 bg-white/60 px-4 text-xs font-medium text-stone-600 transition hover:bg-white/90 disabled:opacity-50"
+        >
+          {pending ? "…" : "Entsperren"}
+        </button>
+      </form>
+      {isSetup && (
+        <p className="text-[11px] text-emerald-600">Erstes Admin-Passwort wurde gesetzt.</p>
+      )}
+      {error && <p className="text-[11px] text-rose-600">{error}</p>}
+      <p className="text-[10px] text-stone-400">
+        Beim ersten Aufruf wird das eingegebene Passwort als Admin-Passwort gesetzt.
+      </p>
+    </div>
   );
 }
