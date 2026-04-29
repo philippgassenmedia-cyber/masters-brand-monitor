@@ -11,8 +11,6 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 const POLL_INTERVAL = 30_000;
 
 // ── Konfiguration laden ─────────────────────────────────────
-// Option 1: Inline Env-Vars (aus generiertem Startbefehl)
-// Option 2: .env.local Datei (Fallback)
 let SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 let SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 let GEMINI_KEY = process.env.GEMINI_API_KEY ?? "";
@@ -70,13 +68,35 @@ async function classify(name: string, az: string, inhaber: string|null, klassen:
     if(!r.ok) throw new Error(`${r.status}`);
     const p = JSON.parse((await r.json()).candidates?.[0]?.content?.parts?.[0]?.text??"{}");
     let sc=p.score??5,pr=p.prioritaet??"medium";
-    // Konservatives Boosting: nur wenn Gemini selbst Immobilien erkennt
     const geminiImmo = /immobili|makler|hausverwalt|beratung|consulting/i.test(p.branchenbezug??"");
     if(match.type==="exact"&&hasImmo&&geminiImmo){sc=Math.max(sc,9);pr="critical";}
     else if(match.type==="exact"&&hasImmo){sc=Math.max(sc,7);}
     else if(match.type==="compound"&&hasImmo&&geminiImmo){sc=Math.max(sc,7);pr=pr==="low"?"high":pr;}
     return {score:sc,branchenbezug:p.branchenbezug??"",prioritaet:pr,begruendung:p.begruendung??""};
   } catch { return {score:match.type==="exact"?(hasImmo?7:4):hasImmo?4:2,branchenbezug:hasImmo?"Immobilien-Klasse":"?",prioritaet:"medium",begruendung:"Auto"}; }
+}
+
+// ── Details + Klassifizierung + DB-Insert für einen Cluster ──
+async function processClusterHits(
+  stemHits: Array<{az:string;name:string;st:string|null}>,
+  stems: string[],
+  dPage: import("playwright").Page,
+): Promise<{newC:number;updC:number;errors:number}> {
+  let newC=0,updC=0,errors=0;
+  for(let i=0;i<stemHits.length;i++){
+    const h=stemHits[i];let inh:string|null=null;let kl:number[]=[];
+    try{await dPage.goto(`https://register.dpma.de/DPMAregister/marke/register/${h.az}/DE`,{timeout:20000});await dPage.waitForTimeout(2500);const d=parseDetail(await dPage.textContent("body")??"");inh=d.inhaber;kl=d.klassen;}catch{}
+    const m=matchType(h.name||h.az,stems);
+    try{
+      const{data:ex}=await db.from("trademarks").select("id").eq("aktenzeichen",h.az).eq("markenstamm",m.stem).maybeSingle();
+      if(ex){await db.from("trademarks").update({last_seen_at:new Date().toISOString()}).eq("id",ex.id);updC++;continue;}
+      await new Promise(r=>setTimeout(r,2000));
+      const cl=await classify(h.name||h.az,h.az,inh,kl,m);
+      await db.from("trademarks").insert({aktenzeichen:h.az,markenname:h.name||`[${h.az}]`,anmelder:inh,status:h.st,nizza_klassen:kl,quelle:"dpma_register",match_type:m.type,markenstamm:m.stem,register_url:`https://register.dpma.de/DPMAregister/marke/register/${h.az}/DE`,relevance_score:cl.score,branchenbezug:cl.branchenbezug,prioritaet:cl.prioritaet,begruendung:cl.begruendung});
+      newC++;console.log(`      ✅ [${i+1}/${stemHits.length}] ${h.name} → Score ${cl.score} (${cl.prioritaet})`);
+    }catch(e){if(!(e as Error).message.includes("duplicate"))errors++;}
+  }
+  return {newC,updC,errors};
 }
 
 // ── DPMA Scan ───────────────────────────────────────────────
@@ -89,13 +109,21 @@ async function runDpmaScan(scanId: string) {
 
   const browser = await chromium.launch({headless:true,channel:"chrome",args:["--headless=new","--disable-blink-features=AutomationControlled","--no-sandbox"]});
   const seenAz = new Set<string>();
-  const hits: Array<{az:string;name:string;st:string|null}> = [];
-  let errors = 0;
+  let totalFound=0,totalNew=0,totalUpdated=0,totalErrors=0;
+
+  // Detail-Browser für alle Cluster wiederverwenden
+  const dCtx = await browser.newContext({userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"});
+  const dPage = await dCtx.newPage();
+  await dPage.addInitScript(()=>{Object.defineProperty(navigator,"webdriver",{get:()=>false});});
 
   for (const stem of stems) {
+    console.log(`\n📌 Cluster „${stem}":`);
     const vars = getVariants(stem,6);
+    const stemHits: Array<{az:string;name:string;st:string|null}> = [];
+
+    // Phase 1: DPMA-Register durchsuchen
     for (let vi=0;vi<vars.length;vi++) {
-      if(vi>0){console.log(`   ⏳ 15s…`);await new Promise(r=>setTimeout(r,15000));}
+      if(vi>0){console.log(`   ⏳ 15s Pause…`);await new Promise(r=>setTimeout(r,15000));}
       const ctx = await browser.newContext({userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"});
       const page = await ctx.newPage();
       await page.addInitScript(()=>{Object.defineProperty(navigator,"webdriver",{get:()=>false});(window as unknown as Record<string,unknown>).chrome={runtime:{}};});
@@ -120,40 +148,38 @@ async function runDpmaScan(scanId: string) {
             const cells=await row.$$("td");if(cells.length<4)continue;
             const t:string[]=[];for(const cl of cells)t.push((await cl.textContent())?.trim().replace(/\s+/g," ")??"");
             const az=t[3]?.replace(/\s/g,"")??"";if(!az||!/^\d+$/.test(az)||seenAz.has(az))continue;
-            seenAz.add(az);hits.push({az,name:t[4]??"",st:t[5]??null});c++;
+            seenAz.add(az);stemHits.push({az,name:t[4]??"",st:t[5]??null});c++;
           }
           const nx=await page.$('a:has-text(">>"), a:has-text("nächste")');if(!nx)break;
           try{await nx.click();await page.waitForLoadState("networkidle",{timeout:20000});await page.waitForTimeout(2000);}catch{break;}
         }
         console.log(`      ✅ ${c} Treffer`);
-      } catch(e){errors++;console.log(`      ❌ ${(e as Error).message.slice(0,80)}`);}
+      } catch(e){totalErrors++;console.log(`      ❌ ${(e as Error).message.slice(0,80)}`);}
       await page.close(); await ctx.close();
+    }
+
+    // Phase 2: Details + Bewertung + DB-Speicherung für diesen Cluster
+    if (stemHits.length > 0) {
+      console.log(`   📊 ${stemHits.length} Treffer → Details + Bewertung + Speicherung…`);
+      const {newC,updC,errors} = await processClusterHits(stemHits, stems, dPage);
+      totalFound += stemHits.length;
+      totalNew += newC;
+      totalUpdated += updC;
+      totalErrors += errors;
+      console.log(`   ✓ Cluster „${stem}" gespeichert: ${newC} neu, ${updC} bekannt`);
+    } else {
+      console.log(`   — Keine neuen Treffer für „${stem}"`);
     }
   }
 
-  // Details + Analyse
-  console.log(`   📊 ${hits.length} Treffer → Details + Bewertung…`);
-  const dCtx = await browser.newContext({userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"});
-  const dPage = await dCtx.newPage();
-  await dPage.addInitScript(()=>{Object.defineProperty(navigator,"webdriver",{get:()=>false});});
-  let newC=0,updC=0;
-
-  for(let i=0;i<hits.length;i++){
-    const h=hits[i];let inh:string|null=null;let kl:number[]=[];
-    try{await dPage.goto(`https://register.dpma.de/DPMAregister/marke/register/${h.az}/DE`,{timeout:20000});await dPage.waitForTimeout(2500);const d=parseDetail(await dPage.textContent("body")??"");inh=d.inhaber;kl=d.klassen;}catch{}
-    const m=matchType(h.name||h.az,stems);
-    try{
-      const{data:ex}=await db.from("trademarks").select("id").eq("aktenzeichen",h.az).eq("markenstamm",m.stem).maybeSingle();
-      if(ex){await db.from("trademarks").update({last_seen_at:new Date().toISOString()}).eq("id",ex.id);updC++;continue;}
-      await new Promise(r=>setTimeout(r,2000));
-      const cl=await classify(h.name||h.az,h.az,inh,kl,m);
-      await db.from("trademarks").insert({aktenzeichen:h.az,markenname:h.name||`[${h.az}]`,anmelder:inh,status:h.st,nizza_klassen:kl,quelle:"dpma_register",match_type:m.type,markenstamm:m.stem,register_url:`https://register.dpma.de/DPMAregister/marke/register/${h.az}/DE`,relevance_score:cl.score,branchenbezug:cl.branchenbezug,prioritaet:cl.prioritaet,begruendung:cl.begruendung});
-      newC++;console.log(`   [${i+1}] ${h.name} → ${cl.score} (${cl.prioritaet})`);
-    }catch(e){if(!(e as Error).message.includes("duplicate"))errors++;}
-  }
+  await dPage.close(); await dCtx.close();
   await browser.close();
-  await db.from("scheduled_scans").update({status:errors>0?"partial":"completed",completed_at:new Date().toISOString(),result:{found:hits.length,new:newC,updated:updC,errors}}).eq("id",scanId);
-  console.log(`   ✅ ${newC} neu, ${updC} aktualisiert, ${errors} Fehler\n`);
+  await db.from("scheduled_scans").update({
+    status: totalErrors > 0 ? "partial" : "completed",
+    completed_at: new Date().toISOString(),
+    result: {found:totalFound,new:totalNew,updated:totalUpdated,errors:totalErrors},
+  }).eq("id",scanId);
+  console.log(`\n✅ Scan abgeschlossen: ${totalNew} neu, ${totalUpdated} aktualisiert, ${totalErrors} Fehler\n`);
 }
 
 // ── Poll Loop ───────────────────────────────────────────────
@@ -169,7 +195,6 @@ async function poll() {
 
 // ── Start ───────────────────────────────────────────────────
 (async()=>{
-  // Test-Verbindung
   const {error} = await db.from("scheduled_scans").select("id").limit(1);
   if(error){console.error("❌ Supabase-Fehler:",error.message);process.exit(1);}
   console.log("✅ Supabase verbunden. Warte auf Aufträge…\n");

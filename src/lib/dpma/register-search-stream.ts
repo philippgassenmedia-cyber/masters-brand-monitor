@@ -165,18 +165,21 @@ export async function* runDpmaSearchStream(
   opts: DpmaSearchOptions = {},
 ): AsyncGenerator<DpmaEvent> {
   const klassen = opts.klassen ?? "36 37 42";
-  let errorCount = 0;
+  let totalErrors = 0;
+  let totalNew = 0;
+  let totalUpdated = 0;
+  let totalFound = 0;
+  const seenAz = new Set<string>();
 
   yield { type: "browser:start" };
   yield { type: "status", message: "Starte DPMA-Registersuche via Gemini…" };
 
-  const allHits: DpmaKurierHit[] = [];
-  const seenAz = new Set<string>();
-
   for (const stem of stems) {
+    const stemHits: DpmaKurierHit[] = [];
+
     try {
       const variants = getTopVariants(stem, 6);
-      yield { type: "status", message: `Suche nach „${stem}" + ${variants.length - 1} Varianten` };
+      yield { type: "status", message: `Cluster „${stem}": ${variants.length} Suchvarianten` };
 
       for (let i = 0; i < variants.length; i++) {
         const variant = variants[i];
@@ -191,7 +194,7 @@ export async function* runDpmaSearchStream(
             if (!r.aktenzeichen || seenAz.has(r.aktenzeichen)) continue;
             seenAz.add(r.aktenzeichen);
 
-            allHits.push({
+            stemHits.push({
               aktenzeichen: r.aktenzeichen,
               markenname: r.markenname || `[${r.aktenzeichen}]`,
               anmelder: r.inhaber,
@@ -207,28 +210,45 @@ export async function* runDpmaSearchStream(
             });
           }
 
-          yield { type: "status", message: `„${variant}": ${results.length} Treffer (${allHits.length} gesamt)` };
+          yield { type: "status", message: `„${variant}": ${results.length} Treffer (${stemHits.length} für „${stem}")` };
         } catch (e) {
-          errorCount++;
+          totalErrors++;
           yield { type: "error", message: `Suche „${variant}": ${(e as Error).message.slice(0, 150)}` };
         }
       }
     } catch (e) {
-      errorCount++;
+      totalErrors++;
       yield { type: "error", message: `Stamm „${stem}": ${(e as Error).message.slice(0, 200)}` };
     }
+
+    // Sofort nach jedem Cluster: Treffer analysieren und in DB speichern
+    if (stemHits.length > 0) {
+      yield { type: "status", message: `Cluster „${stem}": ${stemHits.length} Treffer → Analyse & Speicherung…` };
+      yield { type: "browser:loaded", trefferCount: stemHits.length };
+
+      for await (const ev of classifyAndSave(stemHits, stems)) {
+        if (ev.type === "hit:new") totalNew++;
+        else if (ev.type === "hit:dup") totalUpdated++;
+        else if (ev.type === "error") totalErrors++;
+        yield ev;
+      }
+
+      yield { type: "status", message: `✓ Cluster „${stem}" gespeichert — ${stemHits.length} verarbeitet` };
+    } else {
+      yield { type: "status", message: `Cluster „${stem}": keine neuen Treffer` };
+    }
+
+    totalFound += stemHits.length;
   }
 
-  yield { type: "browser:loaded", trefferCount: allHits.length };
-  yield* runDpmaClassify(allHits, stems);
+  yield { type: "done", totalFound, newTrademarks: totalNew, updated: totalUpdated, errors: totalErrors };
 }
 
-/** Analyse-Phase: klassifiziert gesammelte Treffer, speichert in DB, streamt Events. */
+/** Öffentlicher Export für /api/dpma/classify — klassifiziert alle Treffer und emittiert done. */
 export async function* runDpmaClassify(
   uniqueHits: DpmaKurierHit[],
   stems: string[],
 ): AsyncGenerator<DpmaEvent> {
-  const db = getSupabaseAdminClient();
   let newTrademarks = 0;
   let updated = 0;
   let errorCount = 0;
@@ -236,9 +256,26 @@ export async function* runDpmaClassify(
   yield { type: "browser:done", hitCount: uniqueHits.length };
   yield { type: "status", message: `Starte Analyse von ${uniqueHits.length} Treffern…` };
 
-  for (let i = 0; i < uniqueHits.length; i++) {
-    const hit = uniqueHits[i];
-    yield { type: "analyze:start", index: i + 1, total: uniqueHits.length, markenname: hit.markenname };
+  for await (const ev of classifyAndSave(uniqueHits, stems)) {
+    if (ev.type === "hit:new") newTrademarks++;
+    else if (ev.type === "hit:dup") updated++;
+    else if (ev.type === "error") errorCount++;
+    yield ev;
+  }
+
+  yield { type: "done", totalFound: uniqueHits.length, newTrademarks, updated, errors: errorCount };
+}
+
+/** Klassifiziert Treffer und speichert sie in der DB (kein done-Event, für interne Nutzung). */
+async function* classifyAndSave(
+  hits: DpmaKurierHit[],
+  stems: string[],
+): AsyncGenerator<DpmaEvent> {
+  const db = getSupabaseAdminClient();
+
+  for (let i = 0; i < hits.length; i++) {
+    const hit = hits[i];
+    yield { type: "analyze:start", index: i + 1, total: hits.length, markenname: hit.markenname };
 
     try {
       const match = matchAgainstStems(hit.markenname, stems);
@@ -252,7 +289,6 @@ export async function* runDpmaClassify(
 
       if (existing) {
         await db.from("trademarks").update({ last_seen_at: new Date().toISOString() }).eq("id", existing.id);
-        updated++;
         yield { type: "hit:dup", aktenzeichen: hit.aktenzeichen };
         continue;
       }
@@ -307,17 +343,13 @@ export async function* runDpmaClassify(
         resolved_website: resolvedWebsite,
       }).select("id").single();
 
-      newTrademarks++;
       yield { type: "hit:new", id: inserted?.id ?? "", aktenzeichen: hit.aktenzeichen, markenname: hit.markenname, score: classification.score, website: resolvedWebsite };
       yield { type: "analyze:done", markenname: hit.markenname, score: classification.score, matchType: match.type };
     } catch (e) {
       const msg = (e as Error).message;
       if (!msg.includes("duplicate") && !msg.includes("unique")) {
-        errorCount++;
         yield { type: "error", message: `${hit.aktenzeichen}: ${msg.slice(0, 150)}` };
       }
     }
   }
-
-  yield { type: "done", totalFound: uniqueHits.length, newTrademarks, updated, errors: errorCount };
 }
