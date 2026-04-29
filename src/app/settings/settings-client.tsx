@@ -1278,6 +1278,9 @@ type AdminStatus = {
   usage7d: Record<string, number>;
 };
 
+type TestId = "gemini_basic" | "gemini_grounding" | "gemini_dpma" | "supabase_read" | "supabase_write";
+type TestResult = { ok: boolean; message: string; ms: number } | null;
+
 const KEY_LABELS: Record<string, string> = {
   GEMINI_API_KEY: "GEMINI_API_KEY",
   SUPABASE_URL: "SUPABASE_URL",
@@ -1292,6 +1295,14 @@ const USAGE_LABELS_ADMIN: Record<string, string> = {
   gemini_parse: "GEMINI_PARSE",
 };
 
+const TESTS: { id: TestId; label: string; desc: string }[] = [
+  { id: "gemini_basic",     label: "GEMINI · BASIC",     desc: "Text-Generation ohne Tools" },
+  { id: "gemini_grounding", label: "GEMINI · GROUNDING",  desc: "Google Search Grounding (Paid Tier)" },
+  { id: "gemini_dpma",      label: "GEMINI · 2.5 FLASH",  desc: "JSON-Mode mit gemini-2.5-flash" },
+  { id: "supabase_read",    label: "SUPABASE · READ",     desc: "SELECT aus settings-Tabelle" },
+  { id: "supabase_write",   label: "SUPABASE · WRITE",    desc: "INSERT + DELETE (Testzeile)" },
+];
+
 function maskKey(val: string): string {
   if (!val) return "—";
   if (val.length <= 12) return "•".repeat(val.length);
@@ -1299,16 +1310,19 @@ function maskKey(val: string): string {
 }
 
 function UsageBar({ value, max }: { value: number; max: number }) {
-  const pct = max > 0 ? Math.round((value / max) * 16) : 0;
-  const filled = "█".repeat(pct);
-  const empty = "░".repeat(16 - pct);
-  return <span className="text-emerald-500">{filled}<span className="text-stone-700">{empty}</span></span>;
+  const pct = max > 0 ? Math.round((value / max) * 20) : 0;
+  return (
+    <span className="font-mono">
+      <span className="text-emerald-500">{"█".repeat(pct)}</span>
+      <span className="text-stone-800">{"░".repeat(20 - pct)}</span>
+    </span>
+  );
 }
 
 function AdminConsole({ password, onLock }: { password: string; onLock: () => void }) {
   const [data, setData] = useState<AdminStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [editing, setEditing] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -1319,19 +1333,18 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
   const [pwCurrent, setPwCurrent] = useState("");
   const [pwNew, setPwNew] = useState("");
   const [pwMsg, setPwMsg] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
+  const [testRunning, setTestRunning] = useState<Record<string, boolean>>({});
+  const [section, setSection] = useState<"keys" | "status" | "usage" | "tests">("keys");
 
   const load = async () => {
-    setLoading(true);
-    setError(null);
+    setLoading(true); setFetchError(null);
     try {
       const r = await fetch("/api/admin/status", { headers: { "x-admin-password": password } });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setData(await r.json());
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setFetchError((e as Error).message); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
@@ -1343,8 +1356,7 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
   };
 
   const saveKey = async (key: string) => {
-    setEditPending(true);
-    setEditMsg(null);
+    setEditPending(true); setEditMsg(null);
     try {
       const r = await fetch("/api/admin/keys", {
         method: "PUT",
@@ -1352,14 +1364,9 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
         body: JSON.stringify({ key, value: editValue }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      setEditMsg("Gespeichert");
-      setEditing(null);
-      await load();
-    } catch (e) {
-      setEditMsg((e as Error).message);
-    } finally {
-      setEditPending(false);
-    }
+      setEditMsg("✓ SAVED"); setEditing(null); await load();
+    } catch (e) { setEditMsg(`✗ ${(e as Error).message}`); }
+    finally { setEditPending(false); }
   };
 
   const changePassword = async () => {
@@ -1372,213 +1379,253 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
       });
       const d = await r.json();
       if (!d.ok) throw new Error(d.error ?? "Fehler");
-      setPwMsg("✓ Passwort geändert");
+      setPwMsg("✓ PASSWORT GEÄNDERT");
       setPwCurrent(""); setPwNew("");
-      setTimeout(() => { setChangePw(false); setPwMsg(null); }, 2000);
+      setTimeout(() => { setChangePw(false); setPwMsg(null); }, 2500);
+    } catch (e) { setPwMsg(`✗ ${(e as Error).message}`); }
+  };
+
+  const runTest = async (id: TestId) => {
+    setTestRunning((p) => ({ ...p, [id]: true }));
+    setTestResults((p) => ({ ...p, [id]: null }));
+    try {
+      const r = await fetch("/api/admin/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-admin-password": password },
+        body: JSON.stringify({ test: id }),
+      });
+      const d = await r.json();
+      setTestResults((p) => ({ ...p, [id]: d }));
     } catch (e) {
-      setPwMsg(`✗ ${(e as Error).message}`);
+      setTestResults((p) => ({ ...p, [id]: { ok: false, message: (e as Error).message, ms: 0 } }));
+    } finally {
+      setTestRunning((p) => ({ ...p, [id]: false }));
     }
   };
 
+  const runAllTests = () => TESTS.forEach((t) => runTest(t.id));
   const maxUsage = data ? Math.max(1, ...Object.values(data.usage30d)) : 1;
 
+  const NAV: { id: typeof section; label: string }[] = [
+    { id: "keys",   label: "API KEYS" },
+    { id: "status", label: "STATUS" },
+    { id: "usage",  label: "USAGE" },
+    { id: "tests",  label: "TESTS" },
+  ];
+
   return (
-    <div className="mt-10 rounded-2xl border border-stone-800 bg-stone-950 p-6 font-mono text-sm">
-      {/* Header */}
-      <div className="mb-5 flex items-center justify-between border-b border-stone-800 pb-4">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-bold tracking-[0.3em] text-emerald-500">◈ ADMIN CONSOLE</span>
-          <span className="rounded bg-stone-800 px-2 py-0.5 text-[10px] text-stone-500">v1</span>
+    <div className="fixed inset-0 z-50 flex flex-col bg-stone-950 font-mono text-sm">
+      {/* Titlebar */}
+      <div className="flex shrink-0 items-center justify-between border-b border-stone-800 bg-stone-950 px-6 py-3">
+        <div className="flex items-center gap-4">
+          <span className="text-xs font-bold tracking-[0.25em] text-emerald-400">◈ ADMIN CONSOLE</span>
+          <div className="flex gap-1">
+            {NAV.map((n) => (
+              <button
+                key={n.id}
+                onClick={() => setSection(n.id)}
+                className={`rounded px-3 py-1 text-[10px] font-bold tracking-widest transition ${
+                  section === n.id
+                    ? "bg-stone-800 text-emerald-400"
+                    : "text-stone-600 hover:text-stone-300"
+                }`}
+              >
+                {n.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setChangePw(!changePw)}
-            className="text-[11px] text-stone-500 hover:text-stone-300"
-          >
-            {changePw ? "ABBRECHEN" : "PW ÄNDERN"}
+        <div className="flex items-center gap-4">
+          <button onClick={() => setChangePw(!changePw)} className="text-[10px] text-stone-600 hover:text-amber-400 tracking-widest">
+            {changePw ? "✗ CANCEL" : "PW ÄNDERN"}
           </button>
-          <button onClick={load} className="text-[11px] text-stone-500 hover:text-emerald-400">REFRESH</button>
-          <button onClick={onLock} className="text-[11px] text-stone-500 hover:text-rose-400">
-            ■ LOCK
-          </button>
+          <button onClick={load} className="text-[10px] text-stone-600 hover:text-emerald-400 tracking-widest">⟳ REFRESH</button>
+          <button onClick={onLock} className="text-[10px] text-rose-800 hover:text-rose-400 tracking-widest">■ LOCK</button>
         </div>
       </div>
 
-      {/* Change password */}
+      {/* Change-PW bar */}
       {changePw && (
-        <div className="mb-5 border-b border-stone-800 pb-4">
-          <div className="mb-2 text-[10px] tracking-widest text-stone-500">// PASSWORT ÄNDERN</div>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="password"
-              placeholder="Aktuelles Passwort"
-              value={pwCurrent}
-              onChange={(e) => setPwCurrent(e.target.value)}
-              className="h-8 rounded border border-stone-700 bg-stone-900 px-3 text-xs text-stone-200 outline-none focus:border-emerald-600"
-            />
-            <input
-              type="password"
-              placeholder="Neues Passwort"
-              value={pwNew}
-              onChange={(e) => setPwNew(e.target.value)}
-              className="h-8 rounded border border-stone-700 bg-stone-900 px-3 text-xs text-stone-200 outline-none focus:border-emerald-600"
-            />
-            <button
-              onClick={changePassword}
-              className="h-8 rounded bg-emerald-700 px-4 text-xs font-semibold text-white hover:bg-emerald-600"
-            >
-              SPEICHERN
-            </button>
-            {pwMsg && (
-              <span className={`text-xs ${pwMsg.startsWith("✓") ? "text-emerald-400" : "text-rose-400"}`}>
-                {pwMsg}
-              </span>
-            )}
-          </div>
+        <div className="shrink-0 flex items-center gap-3 border-b border-stone-800 bg-stone-900/80 px-6 py-2.5">
+          <span className="text-[10px] tracking-widest text-stone-500">NEW PASSWORD</span>
+          <input type="password" placeholder="Aktuelles PW" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)}
+            className="h-7 rounded border border-stone-700 bg-stone-950 px-3 text-xs text-stone-200 outline-none focus:border-emerald-600" />
+          <input type="password" placeholder="Neues PW" value={pwNew} onChange={(e) => setPwNew(e.target.value)}
+            className="h-7 rounded border border-stone-700 bg-stone-950 px-3 text-xs text-stone-200 outline-none focus:border-emerald-600" />
+          <button onClick={changePassword} className="h-7 rounded bg-emerald-800 px-4 text-[10px] font-bold text-white hover:bg-emerald-700">SAVE</button>
+          {pwMsg && <span className={`text-[10px] ${pwMsg.startsWith("✓") ? "text-emerald-400" : "text-rose-400"}`}>{pwMsg}</span>}
         </div>
       )}
 
-      {loading && (
-        <div className="py-8 text-center text-xs text-stone-600">
-          <span className="animate-pulse">Lade Systemstatus…</span>
-        </div>
-      )}
-      {error && <div className="py-4 text-xs text-rose-400">✗ {error}</div>}
+      {/* Content */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
+        {loading && <div className="animate-pulse text-xs text-stone-600">LOADING…</div>}
+        {fetchError && <div className="text-xs text-rose-400">✗ {fetchError}</div>}
 
-      {data && (
-        <div className="space-y-6">
-          {/* API Keys */}
-          <div>
-            <div className="mb-3 text-[10px] tracking-widest text-stone-500">// API KEYS</div>
-            <div className="space-y-3">
-              {Object.entries(KEY_LABELS).map(([key, label]) => {
-                const val = data.keys[key] ?? "";
-                const isOverride = data.keyOverrides[key];
-                const isRevealed = revealed[key];
-                const isEditing = editing === key;
-                return (
-                  <div key={key} className="rounded-lg border border-stone-800 bg-stone-900/60 p-3">
-                    <div className="mb-1.5 flex items-center gap-2">
-                      <span className="text-[10px] font-bold text-stone-400">{label}</span>
-                      {isOverride && (
-                        <span className="rounded bg-amber-900/50 px-1.5 py-0.5 text-[9px] font-bold text-amber-400">
-                          DB OVERRIDE
-                        </span>
-                      )}
-                    </div>
-                    {isEditing ? (
-                      <div className="flex items-center gap-2">
-                        <input
-                          autoFocus
-                          type="text"
-                          defaultValue={val}
-                          onChange={(e) => setEditValue(e.target.value)}
-                          className="h-7 flex-1 rounded border border-stone-600 bg-stone-800 px-2 text-xs text-emerald-300 outline-none focus:border-emerald-600 font-mono"
-                          placeholder="Leer lassen = ENV-Variable verwenden"
-                        />
-                        <button
-                          onClick={() => saveKey(key)}
-                          disabled={editPending}
-                          className="rounded bg-emerald-700 px-3 py-1 text-[10px] font-bold text-white hover:bg-emerald-600 disabled:opacity-50"
-                        >
-                          {editPending ? "…" : "SAVE"}
-                        </button>
-                        <button onClick={() => setEditing(null)} className="text-[10px] text-stone-500 hover:text-stone-300">
-                          ✗
-                        </button>
-                        {editMsg && <span className="text-[10px] text-emerald-400">{editMsg}</span>}
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-3">
-                        <span className="flex-1 truncate text-xs text-amber-400/80">
-                          <span className="text-stone-600 mr-1">›</span>
-                          {isRevealed ? val || "—" : maskKey(val)}
-                        </span>
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <button
-                            onClick={() => setRevealed((r) => ({ ...r, [key]: !r[key] }))}
-                            className="rounded px-1.5 py-0.5 text-[9px] text-stone-600 hover:text-stone-300"
-                            title={isRevealed ? "Ausblenden" : "Anzeigen"}
-                          >
-                            {isRevealed ? "HIDE" : "SHOW"}
-                          </button>
-                          <button
-                            onClick={() => copyKey(key, val)}
-                            className="rounded px-1.5 py-0.5 text-[9px] text-stone-600 hover:text-emerald-400"
-                          >
-                            {copied === key ? "✓" : "COPY"}
-                          </button>
-                          <button
-                            onClick={() => { setEditing(key); setEditValue(val); setEditMsg(null); }}
-                            className="rounded px-1.5 py-0.5 text-[9px] text-stone-600 hover:text-amber-400"
-                          >
-                            EDIT
-                          </button>
-                        </div>
-                      </div>
-                    )}
+        {/* ── API KEYS ── */}
+        {section === "keys" && data && (
+          <div className="max-w-3xl space-y-3">
+            <div className="mb-4 text-[10px] tracking-[0.25em] text-stone-600">// API KEYS — EDIT speichert DB-Override (überschreibt ENV)</div>
+            {Object.entries(KEY_LABELS).map(([key, label]) => {
+              const val = data.keys[key] ?? "";
+              const isOverride = data.keyOverrides[key];
+              const isRevealed = revealed[key];
+              const isEditing = editing === key;
+              return (
+                <div key={key} className="rounded border border-stone-800 bg-stone-900 p-4">
+                  <div className="mb-2 flex items-center gap-2">
+                    <span className="text-[10px] font-bold tracking-widest text-stone-400">{label}</span>
+                    {isOverride
+                      ? <span className="rounded bg-amber-900/40 px-2 py-0.5 text-[9px] font-bold text-amber-400 tracking-widest">DB OVERRIDE</span>
+                      : <span className="rounded bg-stone-800 px-2 py-0.5 text-[9px] text-stone-600 tracking-widest">ENV</span>
+                    }
                   </div>
-                );
-              })}
-            </div>
-            <p className="mt-2 text-[10px] text-stone-700">
-              EDIT speichert einen DB-Override (überschreibt Env-Variable). Leer lassen = Env-Variable nutzen.
-            </p>
-          </div>
-
-          {/* Status */}
-          <div>
-            <div className="mb-3 text-[10px] tracking-widest text-stone-500">// SYSTEM STATUS</div>
-            <div className="space-y-2">
-              {[
-                { id: "gemini", label: "GEMINI_API", s: data.status.gemini },
-                { id: "supabase", label: "SUPABASE_DB", s: data.status.supabase },
-              ].map(({ id, label, s }) => (
-                <div key={id} className="flex items-center gap-4 rounded-lg border border-stone-800 bg-stone-900/60 px-3 py-2">
-                  <span className={`text-base leading-none ${s.status === "online" ? "text-emerald-500" : s.status === "error" ? "text-rose-500" : "text-stone-500"}`}>
-                    {s.status === "online" ? "●" : s.status === "error" ? "●" : "○"}
-                  </span>
-                  <span className="w-36 text-xs font-bold text-stone-300">{label}</span>
-                  <span className={`w-16 text-xs font-bold ${s.status === "online" ? "text-emerald-400" : s.status === "error" ? "text-rose-400" : "text-stone-500"}`}>
-                    {s.status.toUpperCase()}
-                  </span>
-                  <span className="text-xs text-stone-600">{s.latency}ms</span>
-                  {s.error && <span className="truncate text-[10px] text-rose-600">{s.error}</span>}
+                  {isEditing ? (
+                    <div className="flex items-center gap-2">
+                      <input autoFocus type="text" defaultValue={val} onChange={(e) => setEditValue(e.target.value)}
+                        className="h-8 flex-1 rounded border border-stone-700 bg-stone-950 px-3 text-xs text-emerald-300 outline-none focus:border-emerald-500"
+                        placeholder="Leer → ENV-Variable verwenden" />
+                      <button onClick={() => saveKey(key)} disabled={editPending}
+                        className="h-8 rounded bg-emerald-800 px-4 text-[10px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                        {editPending ? "…" : "SAVE"}
+                      </button>
+                      <button onClick={() => setEditing(null)} className="h-8 px-2 text-[10px] text-stone-600 hover:text-stone-300">✗</button>
+                      {editMsg && <span className={`text-[10px] ${editMsg.startsWith("✓") ? "text-emerald-400" : "text-rose-400"}`}>{editMsg}</span>}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <span className="flex-1 truncate text-xs text-amber-300/70">
+                        <span className="mr-2 text-stone-700">›</span>
+                        {isRevealed ? (val || "—") : maskKey(val)}
+                      </span>
+                      <div className="flex shrink-0 gap-1">
+                        {[
+                          { label: isRevealed ? "HIDE" : "SHOW", action: () => setRevealed((r) => ({ ...r, [key]: !r[key] })), color: "hover:text-stone-200" },
+                          { label: copied === key ? "✓" : "COPY", action: () => copyKey(key, val), color: "hover:text-emerald-400" },
+                          { label: "EDIT", action: () => { setEditing(key); setEditValue(val); setEditMsg(null); }, color: "hover:text-amber-400" },
+                        ].map((btn) => (
+                          <button key={btn.label} onClick={btn.action}
+                            className={`rounded border border-stone-800 px-2 py-1 text-[9px] font-bold text-stone-600 transition ${btn.color}`}>
+                            {btn.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
+        )}
 
-          {/* Usage */}
-          <div>
-            <div className="mb-3 flex items-center gap-4 text-[10px] tracking-widest text-stone-500">
-              <span>// API USAGE</span>
-              <span className="text-stone-700">7D / 30D</span>
-            </div>
-            <div className="space-y-1.5">
+        {/* ── STATUS ── */}
+        {section === "status" && data && (
+          <div className="max-w-2xl space-y-2">
+            <div className="mb-4 text-[10px] tracking-[0.25em] text-stone-600">// SYSTEM STATUS</div>
+            {[
+              { id: "gemini",   label: "GEMINI_API",   s: data.status.gemini },
+              { id: "supabase", label: "SUPABASE_DB",  s: data.status.supabase },
+            ].map(({ id, label, s }) => (
+              <div key={id} className="flex items-start gap-4 rounded border border-stone-800 bg-stone-900 px-4 py-3">
+                <span className={`mt-0.5 text-lg leading-none ${s.status === "online" ? "text-emerald-500" : "text-rose-500"}`}>●</span>
+                <div className="flex-1">
+                  <div className="flex items-center gap-4">
+                    <span className="w-32 text-xs font-bold text-stone-300">{label}</span>
+                    <span className={`text-xs font-bold tracking-widest ${s.status === "online" ? "text-emerald-400" : "text-rose-400"}`}>
+                      {s.status.toUpperCase()}
+                    </span>
+                    <span className="text-xs text-stone-600">{s.latency}ms</span>
+                  </div>
+                  {s.error && <div className="mt-1 text-[11px] text-rose-600">{s.error}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── USAGE ── */}
+        {section === "usage" && data && (
+          <div className="max-w-2xl">
+            <div className="mb-4 text-[10px] tracking-[0.25em] text-stone-600">// API USAGE — 30D / 7D</div>
+            <div className="space-y-2">
               {Object.entries(USAGE_LABELS_ADMIN).map(([provider, label]) => {
                 const v30 = data.usage30d[provider] ?? 0;
                 const v7 = data.usage7d[provider] ?? 0;
                 return (
-                  <div key={provider} className="flex items-center gap-3">
-                    <span className="w-36 text-[10px] text-stone-400">{label}</span>
+                  <div key={provider} className="flex items-center gap-4 rounded border border-stone-800 bg-stone-900 px-4 py-2.5">
+                    <span className="w-36 text-[10px] font-bold tracking-widest text-stone-500">{label}</span>
                     <UsageBar value={v30} max={maxUsage} />
-                    <span className="w-16 text-right text-xs tabular-nums text-stone-400">
-                      {v30.toLocaleString("de-DE")}
-                    </span>
-                    <span className="text-[10px] text-stone-700">
-                      ({v7.toLocaleString("de-DE")} 7d)
-                    </span>
+                    <span className="w-20 text-right text-xs tabular-nums text-amber-300/70">{v30.toLocaleString("de-DE")}</span>
+                    <span className="text-[10px] text-stone-700">7d: {v7.toLocaleString("de-DE")}</span>
                   </div>
                 );
               })}
               {Object.keys(USAGE_LABELS_ADMIN).every((k) => !data.usage30d[k]) && (
-                <div className="text-xs text-stone-700">Keine Daten für die letzten 30 Tage.</div>
+                <div className="text-xs text-stone-700">Keine API-Calls in den letzten 30 Tagen.</div>
               )}
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* ── TESTS ── */}
+        {section === "tests" && (
+          <div className="max-w-2xl">
+            <div className="mb-4 flex items-center gap-4">
+              <span className="text-[10px] tracking-[0.25em] text-stone-600">// API TESTS</span>
+              <button onClick={runAllTests}
+                className="rounded border border-stone-700 px-3 py-1 text-[10px] font-bold text-stone-500 hover:border-emerald-700 hover:text-emerald-400 tracking-widest">
+                ▶ RUN ALL
+              </button>
+            </div>
+            <div className="space-y-2">
+              {TESTS.map((t) => {
+                const res = testResults[t.id] ?? null;
+                const running = testRunning[t.id] ?? false;
+                return (
+                  <div key={t.id} className="rounded border border-stone-800 bg-stone-900 px-4 py-3">
+                    <div className="flex items-center gap-4">
+                      <span className={`w-2 text-base leading-none ${
+                        running ? "animate-pulse text-amber-400"
+                        : res === null ? "text-stone-700"
+                        : res.ok ? "text-emerald-500" : "text-rose-500"
+                      }`}>●</span>
+                      <div className="flex-1">
+                        <div className="flex items-baseline gap-3">
+                          <span className="text-[11px] font-bold tracking-widest text-stone-300">{t.label}</span>
+                          <span className="text-[10px] text-stone-600">{t.desc}</span>
+                        </div>
+                        {res && (
+                          <div className={`mt-1 text-[11px] ${res.ok ? "text-emerald-400" : "text-rose-400"}`}>
+                            <span className="mr-2">{res.ok ? "✓" : "✗"}</span>
+                            <span>{res.message}</span>
+                            <span className="ml-2 text-stone-600">{res.ms}ms</span>
+                          </div>
+                        )}
+                        {running && <div className="mt-1 animate-pulse text-[11px] text-amber-500">RUNNING…</div>}
+                      </div>
+                      <button
+                        onClick={() => runTest(t.id)}
+                        disabled={running}
+                        className="rounded border border-stone-700 px-3 py-1 text-[10px] font-bold text-stone-600 hover:border-emerald-700 hover:text-emerald-400 disabled:opacity-40 tracking-widest"
+                      >
+                        {running ? "…" : "▶ RUN"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Statusbar */}
+      <div className="shrink-0 flex items-center justify-between border-t border-stone-800 bg-stone-950 px-6 py-2">
+        <span className="text-[10px] text-stone-700">
+          {data ? `SUPABASE ${data.status.supabase.status.toUpperCase()} · GEMINI ${data.status.gemini.status.toUpperCase()}` : "—"}
+        </span>
+        <span className="text-[10px] text-stone-700">Brand Monitor Admin Console</span>
+      </div>
     </div>
   );
 }
@@ -1589,11 +1636,10 @@ function AdminConsoleGate() {
   const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [isSetup, setIsSetup] = useState(false);
+  const [setupDone, setSetupDone] = useState(false);
 
   const unlock = async () => {
-    setPending(true);
-    setError(null);
+    setPending(true); setError(null);
     try {
       const r = await fetch("/api/admin/verify", {
         method: "POST",
@@ -1601,60 +1647,38 @@ function AdminConsoleGate() {
         body: JSON.stringify({ password: input }),
       });
       const d = await r.json();
-      if (!d.ok) throw new Error(d.error ?? "Fehler");
+      if (!d.ok) throw new Error(d.error ?? "Falsches Passwort");
       setPassword(input);
-      setIsSetup(d.setup ?? false);
+      setSetupDone(d.setup ?? false);
       setOpen(true);
       setInput("");
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setPending(false);
-    }
+    } catch (e) { setError((e as Error).message); }
+    finally { setPending(false); }
   };
 
   if (open && password) {
-    return (
-      <AdminConsole
-        password={password}
-        onLock={() => { setOpen(false); setPassword(""); }}
-      />
-    );
+    return <AdminConsole password={password} onLock={() => { setOpen(false); setPassword(""); }} />;
   }
 
   return (
-    <div className="mt-10 flex flex-col items-center gap-3">
-      <div className="flex items-center gap-3">
-        <div className="h-px w-16 bg-stone-200" />
-        <span className="text-[10px] uppercase tracking-widest text-stone-400">System</span>
-        <div className="h-px w-16 bg-stone-200" />
-      </div>
-      <form
-        onSubmit={(e) => { e.preventDefault(); unlock(); }}
-        className="flex items-center gap-2"
-      >
+    <div className="mt-12 flex flex-col items-center gap-3 border-t border-stone-100 pt-8">
+      <span className="text-[10px] uppercase tracking-[0.25em] text-stone-300">System</span>
+      <form onSubmit={(e) => { e.preventDefault(); unlock(); }} className="flex items-center gap-2">
         <input
           type="password"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Admin-Passwort eingeben…"
-          className="h-8 w-56 rounded-full border border-stone-200 bg-white/50 px-4 text-xs text-stone-700 outline-none focus:border-stone-400"
+          placeholder="Admin-Passwort…"
+          className="h-8 w-52 rounded-full border border-stone-200 bg-white/50 px-4 text-xs text-stone-700 outline-none focus:border-stone-400"
         />
-        <button
-          type="submit"
-          disabled={pending || !input}
-          className="h-8 rounded-full border border-stone-200 bg-white/60 px-4 text-xs font-medium text-stone-600 transition hover:bg-white/90 disabled:opacity-50"
-        >
+        <button type="submit" disabled={pending || !input}
+          className="h-8 rounded-full border border-stone-200 bg-white/60 px-4 text-xs font-medium text-stone-600 transition hover:bg-white/90 disabled:opacity-50">
           {pending ? "…" : "Entsperren"}
         </button>
       </form>
-      {isSetup && (
-        <p className="text-[11px] text-emerald-600">Erstes Admin-Passwort wurde gesetzt.</p>
-      )}
-      {error && <p className="text-[11px] text-rose-600">{error}</p>}
-      <p className="text-[10px] text-stone-400">
-        Beim ersten Aufruf wird das eingegebene Passwort als Admin-Passwort gesetzt.
-      </p>
+      {setupDone && <p className="text-[11px] text-emerald-600">Admin-Passwort gesetzt.</p>}
+      {error && <p className="text-[11px] text-rose-500">{error}</p>}
+      <p className="text-[10px] text-stone-300">Erster Aufruf setzt das Passwort.</p>
     </div>
   );
 }
