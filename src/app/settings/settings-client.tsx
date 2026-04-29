@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition, useEffect } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
@@ -1413,21 +1414,21 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
     { id: "tests",  label: "TESTS" },
   ];
 
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-stone-950 font-mono text-sm">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex flex-col bg-stone-950 font-mono text-sm text-stone-200">
       {/* Titlebar */}
-      <div className="flex shrink-0 items-center justify-between border-b border-stone-800 bg-stone-950 px-6 py-3">
-        <div className="flex items-center gap-4">
+      <div className="flex shrink-0 items-center justify-between border-b border-stone-700 bg-stone-900 px-6 py-3">
+        <div className="flex items-center gap-5">
           <span className="text-xs font-bold tracking-[0.25em] text-emerald-400">◈ ADMIN CONSOLE</span>
           <div className="flex gap-1">
             {NAV.map((n) => (
               <button
                 key={n.id}
                 onClick={() => setSection(n.id)}
-                className={`rounded px-3 py-1 text-[10px] font-bold tracking-widest transition ${
+                className={`rounded px-3 py-1.5 text-[10px] font-bold tracking-widest transition ${
                   section === n.id
-                    ? "bg-stone-800 text-emerald-400"
-                    : "text-stone-600 hover:text-stone-300"
+                    ? "bg-stone-700 text-emerald-300"
+                    : "text-stone-400 hover:text-stone-100"
                 }`}
               >
                 {n.label}
@@ -1435,77 +1436,77 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
             ))}
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <button onClick={() => setChangePw(!changePw)} className="text-[10px] text-stone-600 hover:text-amber-400 tracking-widest">
-            {changePw ? "✗ CANCEL" : "PW ÄNDERN"}
+        <div className="flex items-center gap-5">
+          <button onClick={() => setChangePw(!changePw)} className="text-[10px] text-stone-400 hover:text-amber-300 tracking-widest">
+            {changePw ? "✗ ABBRECHEN" : "PW ÄNDERN"}
           </button>
-          <button onClick={load} className="text-[10px] text-stone-600 hover:text-emerald-400 tracking-widest">⟳ REFRESH</button>
-          <button onClick={onLock} className="text-[10px] text-rose-800 hover:text-rose-400 tracking-widest">■ LOCK</button>
+          <button onClick={load} className="text-[10px] text-stone-400 hover:text-emerald-300 tracking-widest">⟳ REFRESH</button>
+          <button onClick={onLock} className="text-[10px] text-rose-500 hover:text-rose-300 tracking-widest">■ LOCK</button>
         </div>
       </div>
 
       {/* Change-PW bar */}
       {changePw && (
-        <div className="shrink-0 flex items-center gap-3 border-b border-stone-800 bg-stone-900/80 px-6 py-2.5">
-          <span className="text-[10px] tracking-widest text-stone-500">NEW PASSWORD</span>
+        <div className="shrink-0 flex items-center gap-3 border-b border-stone-700 bg-stone-900 px-6 py-2.5">
+          <span className="text-[10px] tracking-widest text-stone-400">NEUES PASSWORT</span>
           <input type="password" placeholder="Aktuelles PW" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)}
-            className="h-7 rounded border border-stone-700 bg-stone-950 px-3 text-xs text-stone-200 outline-none focus:border-emerald-600" />
+            className="h-7 rounded border border-stone-600 bg-stone-950 px-3 text-xs text-stone-100 outline-none placeholder:text-stone-600 focus:border-emerald-500" />
           <input type="password" placeholder="Neues PW" value={pwNew} onChange={(e) => setPwNew(e.target.value)}
-            className="h-7 rounded border border-stone-700 bg-stone-950 px-3 text-xs text-stone-200 outline-none focus:border-emerald-600" />
-          <button onClick={changePassword} className="h-7 rounded bg-emerald-800 px-4 text-[10px] font-bold text-white hover:bg-emerald-700">SAVE</button>
+            className="h-7 rounded border border-stone-600 bg-stone-950 px-3 text-xs text-stone-100 outline-none placeholder:text-stone-600 focus:border-emerald-500" />
+          <button onClick={changePassword} className="h-7 rounded bg-emerald-700 px-4 text-[10px] font-bold text-white hover:bg-emerald-600">SAVE</button>
           {pwMsg && <span className={`text-[10px] ${pwMsg.startsWith("✓") ? "text-emerald-400" : "text-rose-400"}`}>{pwMsg}</span>}
         </div>
       )}
 
       {/* Content */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
-        {loading && <div className="animate-pulse text-xs text-stone-600">LOADING…</div>}
+      <div className="min-h-0 flex-1 overflow-y-auto px-8 py-7">
+        {loading && <div className="animate-pulse text-xs text-stone-400">LOADING…</div>}
         {fetchError && <div className="text-xs text-rose-400">✗ {fetchError}</div>}
 
         {/* ── API KEYS ── */}
         {section === "keys" && data && (
           <div className="max-w-3xl space-y-3">
-            <div className="mb-4 text-[10px] tracking-[0.25em] text-stone-600">// API KEYS — EDIT speichert DB-Override (überschreibt ENV)</div>
+            <div className="mb-5 text-[10px] tracking-[0.25em] text-stone-400">// API KEYS — EDIT speichert DB-Override (überschreibt ENV)</div>
             {Object.entries(KEY_LABELS).map(([key, label]) => {
               const val = data.keys[key] ?? "";
               const isOverride = data.keyOverrides[key];
               const isRevealed = revealed[key];
               const isEditing = editing === key;
               return (
-                <div key={key} className="rounded border border-stone-800 bg-stone-900 p-4">
-                  <div className="mb-2 flex items-center gap-2">
-                    <span className="text-[10px] font-bold tracking-widest text-stone-400">{label}</span>
+                <div key={key} className="rounded border border-stone-700 bg-stone-900 p-4">
+                  <div className="mb-2.5 flex items-center gap-2">
+                    <span className="text-[10px] font-bold tracking-widest text-stone-200">{label}</span>
                     {isOverride
-                      ? <span className="rounded bg-amber-900/40 px-2 py-0.5 text-[9px] font-bold text-amber-400 tracking-widest">DB OVERRIDE</span>
-                      : <span className="rounded bg-stone-800 px-2 py-0.5 text-[9px] text-stone-600 tracking-widest">ENV</span>
+                      ? <span className="rounded bg-amber-900/60 px-2 py-0.5 text-[9px] font-bold text-amber-300 tracking-widest">DB OVERRIDE</span>
+                      : <span className="rounded bg-stone-700 px-2 py-0.5 text-[9px] text-stone-400 tracking-widest">ENV</span>
                     }
                   </div>
                   {isEditing ? (
                     <div className="flex items-center gap-2">
                       <input autoFocus type="text" defaultValue={val} onChange={(e) => setEditValue(e.target.value)}
-                        className="h-8 flex-1 rounded border border-stone-700 bg-stone-950 px-3 text-xs text-emerald-300 outline-none focus:border-emerald-500"
-                        placeholder="Leer → ENV-Variable verwenden" />
+                        className="h-8 flex-1 rounded border border-stone-600 bg-stone-950 px-3 text-xs text-emerald-200 outline-none focus:border-emerald-500"
+                        placeholder="Leer lassen → ENV-Variable verwenden" />
                       <button onClick={() => saveKey(key)} disabled={editPending}
-                        className="h-8 rounded bg-emerald-800 px-4 text-[10px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                        className="h-8 rounded bg-emerald-700 px-4 text-[10px] font-bold text-white hover:bg-emerald-600 disabled:opacity-50">
                         {editPending ? "…" : "SAVE"}
                       </button>
-                      <button onClick={() => setEditing(null)} className="h-8 px-2 text-[10px] text-stone-600 hover:text-stone-300">✗</button>
+                      <button onClick={() => setEditing(null)} className="h-8 px-2 text-[10px] text-stone-400 hover:text-stone-100">✗</button>
                       {editMsg && <span className={`text-[10px] ${editMsg.startsWith("✓") ? "text-emerald-400" : "text-rose-400"}`}>{editMsg}</span>}
                     </div>
                   ) : (
                     <div className="flex items-center gap-3">
-                      <span className="flex-1 truncate text-xs text-amber-300/70">
-                        <span className="mr-2 text-stone-700">›</span>
+                      <span className="flex-1 truncate text-xs text-amber-200/80">
+                        <span className="mr-2 text-stone-500">›</span>
                         {isRevealed ? (val || "—") : maskKey(val)}
                       </span>
                       <div className="flex shrink-0 gap-1">
                         {[
-                          { label: isRevealed ? "HIDE" : "SHOW", action: () => setRevealed((r) => ({ ...r, [key]: !r[key] })), color: "hover:text-stone-200" },
-                          { label: copied === key ? "✓" : "COPY", action: () => copyKey(key, val), color: "hover:text-emerald-400" },
-                          { label: "EDIT", action: () => { setEditing(key); setEditValue(val); setEditMsg(null); }, color: "hover:text-amber-400" },
+                          { label: isRevealed ? "HIDE" : "SHOW", action: () => setRevealed((r) => ({ ...r, [key]: !r[key] })), color: "hover:text-stone-100" },
+                          { label: copied === key ? "✓" : "COPY", action: () => copyKey(key, val), color: "hover:text-emerald-300" },
+                          { label: "EDIT", action: () => { setEditing(key); setEditValue(val); setEditMsg(null); }, color: "hover:text-amber-300" },
                         ].map((btn) => (
                           <button key={btn.label} onClick={btn.action}
-                            className={`rounded border border-stone-800 px-2 py-1 text-[9px] font-bold text-stone-600 transition ${btn.color}`}>
+                            className={`rounded border border-stone-600 px-2 py-1 text-[9px] font-bold text-stone-400 transition ${btn.color}`}>
                             {btn.label}
                           </button>
                         ))}
@@ -1521,22 +1522,22 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
         {/* ── STATUS ── */}
         {section === "status" && data && (
           <div className="max-w-2xl space-y-2">
-            <div className="mb-4 text-[10px] tracking-[0.25em] text-stone-600">// SYSTEM STATUS</div>
+            <div className="mb-5 text-[10px] tracking-[0.25em] text-stone-400">// SYSTEM STATUS</div>
             {[
               { id: "gemini",   label: "GEMINI_API",   s: data.status.gemini },
               { id: "supabase", label: "SUPABASE_DB",  s: data.status.supabase },
             ].map(({ id, label, s }) => (
-              <div key={id} className="flex items-start gap-4 rounded border border-stone-800 bg-stone-900 px-4 py-3">
-                <span className={`mt-0.5 text-lg leading-none ${s.status === "online" ? "text-emerald-500" : "text-rose-500"}`}>●</span>
+              <div key={id} className="flex items-start gap-4 rounded border border-stone-700 bg-stone-900 px-5 py-4">
+                <span className={`mt-0.5 text-lg leading-none ${s.status === "online" ? "text-emerald-400" : "text-rose-400"}`}>●</span>
                 <div className="flex-1">
                   <div className="flex items-center gap-4">
-                    <span className="w-32 text-xs font-bold text-stone-300">{label}</span>
+                    <span className="w-32 text-xs font-bold text-stone-100">{label}</span>
                     <span className={`text-xs font-bold tracking-widest ${s.status === "online" ? "text-emerald-400" : "text-rose-400"}`}>
                       {s.status.toUpperCase()}
                     </span>
-                    <span className="text-xs text-stone-600">{s.latency}ms</span>
+                    <span className="text-xs text-stone-400">{s.latency}ms</span>
                   </div>
-                  {s.error && <div className="mt-1 text-[11px] text-rose-600">{s.error}</div>}
+                  {s.error && <div className="mt-1 text-[11px] text-rose-400">{s.error}</div>}
                 </div>
               </div>
             ))}
@@ -1546,22 +1547,22 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
         {/* ── USAGE ── */}
         {section === "usage" && data && (
           <div className="max-w-2xl">
-            <div className="mb-4 text-[10px] tracking-[0.25em] text-stone-600">// API USAGE — 30D / 7D</div>
+            <div className="mb-5 text-[10px] tracking-[0.25em] text-stone-400">// API USAGE — 30D / 7D</div>
             <div className="space-y-2">
               {Object.entries(USAGE_LABELS_ADMIN).map(([provider, label]) => {
                 const v30 = data.usage30d[provider] ?? 0;
                 const v7 = data.usage7d[provider] ?? 0;
                 return (
-                  <div key={provider} className="flex items-center gap-4 rounded border border-stone-800 bg-stone-900 px-4 py-2.5">
-                    <span className="w-36 text-[10px] font-bold tracking-widest text-stone-500">{label}</span>
+                  <div key={provider} className="flex items-center gap-4 rounded border border-stone-700 bg-stone-900 px-5 py-3">
+                    <span className="w-36 text-[10px] font-bold tracking-widest text-stone-300">{label}</span>
                     <UsageBar value={v30} max={maxUsage} />
-                    <span className="w-20 text-right text-xs tabular-nums text-amber-300/70">{v30.toLocaleString("de-DE")}</span>
-                    <span className="text-[10px] text-stone-700">7d: {v7.toLocaleString("de-DE")}</span>
+                    <span className="w-20 text-right text-xs tabular-nums text-amber-200/90">{v30.toLocaleString("de-DE")}</span>
+                    <span className="text-[10px] text-stone-400">7d: {v7.toLocaleString("de-DE")}</span>
                   </div>
                 );
               })}
               {Object.keys(USAGE_LABELS_ADMIN).every((k) => !data.usage30d[k]) && (
-                <div className="text-xs text-stone-700">Keine API-Calls in den letzten 30 Tagen.</div>
+                <div className="text-xs text-stone-400">Keine API-Calls in den letzten 30 Tagen.</div>
               )}
             </div>
           </div>
@@ -1570,10 +1571,10 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
         {/* ── TESTS ── */}
         {section === "tests" && (
           <div className="max-w-2xl">
-            <div className="mb-4 flex items-center gap-4">
-              <span className="text-[10px] tracking-[0.25em] text-stone-600">// API TESTS</span>
+            <div className="mb-5 flex items-center gap-4">
+              <span className="text-[10px] tracking-[0.25em] text-stone-400">// API TESTS</span>
               <button onClick={runAllTests}
-                className="rounded border border-stone-700 px-3 py-1 text-[10px] font-bold text-stone-500 hover:border-emerald-700 hover:text-emerald-400 tracking-widest">
+                className="rounded border border-stone-600 px-3 py-1 text-[10px] font-bold text-stone-300 hover:border-emerald-600 hover:text-emerald-300 tracking-widest">
                 ▶ RUN ALL
               </button>
             </div>
@@ -1582,31 +1583,31 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
                 const res = testResults[t.id] ?? null;
                 const running = testRunning[t.id] ?? false;
                 return (
-                  <div key={t.id} className="rounded border border-stone-800 bg-stone-900 px-4 py-3">
+                  <div key={t.id} className="rounded border border-stone-700 bg-stone-900 px-5 py-3.5">
                     <div className="flex items-center gap-4">
                       <span className={`w-2 text-base leading-none ${
                         running ? "animate-pulse text-amber-400"
-                        : res === null ? "text-stone-700"
-                        : res.ok ? "text-emerald-500" : "text-rose-500"
+                        : res === null ? "text-stone-600"
+                        : res.ok ? "text-emerald-400" : "text-rose-400"
                       }`}>●</span>
                       <div className="flex-1">
                         <div className="flex items-baseline gap-3">
-                          <span className="text-[11px] font-bold tracking-widest text-stone-300">{t.label}</span>
-                          <span className="text-[10px] text-stone-600">{t.desc}</span>
+                          <span className="text-[11px] font-bold tracking-widest text-stone-100">{t.label}</span>
+                          <span className="text-[10px] text-stone-400">{t.desc}</span>
                         </div>
                         {res && (
-                          <div className={`mt-1 text-[11px] ${res.ok ? "text-emerald-400" : "text-rose-400"}`}>
+                          <div className={`mt-1 text-[11px] ${res.ok ? "text-emerald-300" : "text-rose-300"}`}>
                             <span className="mr-2">{res.ok ? "✓" : "✗"}</span>
                             <span>{res.message}</span>
-                            <span className="ml-2 text-stone-600">{res.ms}ms</span>
+                            <span className="ml-2 text-stone-400">{res.ms}ms</span>
                           </div>
                         )}
-                        {running && <div className="mt-1 animate-pulse text-[11px] text-amber-500">RUNNING…</div>}
+                        {running && <div className="mt-1 animate-pulse text-[11px] text-amber-400">RUNNING…</div>}
                       </div>
                       <button
                         onClick={() => runTest(t.id)}
                         disabled={running}
-                        className="rounded border border-stone-700 px-3 py-1 text-[10px] font-bold text-stone-600 hover:border-emerald-700 hover:text-emerald-400 disabled:opacity-40 tracking-widest"
+                        className="rounded border border-stone-600 px-3 py-1 text-[10px] font-bold text-stone-300 hover:border-emerald-600 hover:text-emerald-300 disabled:opacity-40 tracking-widest"
                       >
                         {running ? "…" : "▶ RUN"}
                       </button>
@@ -1620,13 +1621,14 @@ function AdminConsole({ password, onLock }: { password: string; onLock: () => vo
       </div>
 
       {/* Statusbar */}
-      <div className="shrink-0 flex items-center justify-between border-t border-stone-800 bg-stone-950 px-6 py-2">
-        <span className="text-[10px] text-stone-700">
+      <div className="shrink-0 flex items-center justify-between border-t border-stone-700 bg-stone-900 px-6 py-2">
+        <span className="text-[10px] text-stone-400">
           {data ? `SUPABASE ${data.status.supabase.status.toUpperCase()} · GEMINI ${data.status.gemini.status.toUpperCase()}` : "—"}
         </span>
-        <span className="text-[10px] text-stone-700">Brand Monitor Admin Console</span>
+        <span className="text-[10px] text-stone-500">Brand Monitor Admin Console</span>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
