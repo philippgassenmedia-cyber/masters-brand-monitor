@@ -24,6 +24,7 @@ export async function POST(req: Request) {
     nurInKraft:     body.nurInKraft !== false,
     klassen:        typeof body.klassen === "string" ? body.klassen : "36 37 42",
     zeitraumMonate: typeof body.zeitraumMonate === "number" ? body.zeitraumMonate : 0,
+    maxVarianten:   typeof body.maxVarianten === "number" ? Math.min(Math.max(1, body.maxVarianten), 6) : undefined,
   };
 
   const encoder = new TextEncoder();

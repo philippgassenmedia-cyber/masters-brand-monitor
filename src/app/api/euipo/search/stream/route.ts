@@ -22,6 +22,7 @@ export async function POST(req: Request) {
   const klassen = typeof body.klassen === "string" ? body.klassen : undefined;
   const nurInKraft = body.nurInKraft === true;
   const zeitraumMonate = typeof body.zeitraumMonate === "number" ? body.zeitraumMonate : undefined;
+  const maxVarianten = typeof body.maxVarianten === "number" ? Math.min(Math.max(1, body.maxVarianten), 6) : undefined;
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
@@ -37,7 +38,7 @@ export async function POST(req: Request) {
       }, 2000);
 
       try {
-        for await (const evt of runEuipoSearchStream(stems, { klassen, nurInKraft, zeitraumMonate })) {
+        for await (const evt of runEuipoSearchStream(stems, { klassen, nurInKraft, zeitraumMonate, maxVarianten })) {
           write(evt);
         }
       } catch (e) {

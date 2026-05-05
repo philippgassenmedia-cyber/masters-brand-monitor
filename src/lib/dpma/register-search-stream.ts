@@ -26,6 +26,7 @@ export interface DpmaSearchOptions {
   nurInKraft?: boolean;
   klassen?: string;
   zeitraumMonate?: number;
+  maxVarianten?: number;
 }
 
 interface GeminiTrademarkHit {
@@ -178,7 +179,7 @@ export async function* runDpmaSearchStream(
     const stemHits: DpmaKurierHit[] = [];
 
     try {
-      const variants = getTopVariants(stem, 6);
+      const variants = getTopVariants(stem, opts.maxVarianten ?? 6);
       yield { type: "status", message: `Cluster „${stem}": ${variants.length} Suchvarianten` };
 
       for (let i = 0; i < variants.length; i++) {

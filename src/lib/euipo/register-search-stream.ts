@@ -26,6 +26,7 @@ export interface EuipoSearchOptions {
   klassen?: string;
   zeitraumMonate?: number;
   nurInKraft?: boolean;
+  maxVarianten?: number;
 }
 
 export interface EuipoRawHit {
@@ -321,7 +322,7 @@ export async function* runEuipoSearchStream(
   yield { type: "status", message: "Starte EUIPO-Suche via Gemini Grounding…" };
 
   for (const stem of stems) {
-    const variants = getTopVariants(stem, 6);
+    const variants = getTopVariants(stem, opts.maxVarianten ?? 6);
     yield { type: "status", message: `Cluster „${stem}": ${variants.length} Varianten → EUIPO via Google…` };
 
     const stemHits: GeminiEuipoHit[] = [];
