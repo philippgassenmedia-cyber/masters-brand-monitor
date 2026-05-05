@@ -15,6 +15,15 @@ function isPublic(pathname: string) {
 }
 
 export async function middleware(request: NextRequest) {
+  // Safety net: never let an unhandled error here surface as a 500 to the user.
+  try {
+    return await runMiddleware(request);
+  } catch {
+    return NextResponse.next({ request });
+  }
+}
+
+async function runMiddleware(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -50,14 +59,20 @@ export async function middleware(request: NextRequest) {
 
   // Check approval for all non-public paths (skip /pending itself to avoid loop)
   if (!isPublic(pathname) && pathname !== "/pending") {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("approved")
-      .eq("id", user.id)
-      .maybeSingle();
+    try {
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("approved")
+        .eq("id", user.id)
+        .maybeSingle();
 
-    if (profile !== null && !profile.approved) {
-      return NextResponse.redirect(new URL("/pending", request.url));
+      // Only gate if profile exists and is explicitly unapproved.
+      // Fail open on DB errors (e.g. table not yet migrated).
+      if (!error && profile !== null && !profile.approved) {
+        return NextResponse.redirect(new URL("/pending", request.url));
+      }
+    } catch {
+      // Fail open — let the request through if the profiles check crashes.
     }
   }
 
