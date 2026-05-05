@@ -1,5 +1,6 @@
 import { getSupabaseServerClient, getSupabaseAdminClient } from "@/lib/supabase/server";
-import { runEuipoSearchStream } from "@/lib/euipo/register-search-stream";
+import { runEuipoClassify } from "@/lib/euipo/register-search-stream";
+import type { EuipoRawHit } from "@/lib/euipo/register-search-stream";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -11,33 +12,29 @@ export async function POST(req: Request) {
     return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 });
   }
 
-  let body: Record<string, unknown> = {};
-  try { body = await req.json(); } catch {}
+  const body = await req.json();
+  const hits = (body.hits ?? []) as EuipoRawHit[];
 
   const admin = getSupabaseAdminClient();
   const { data: stemsData } = await admin.from("brand_stems").select("stamm").eq("aktiv", true);
   const stems = (stemsData ?? []).map((s) => s.stamm as string);
   if (!stems.length) stems.push("master");
 
-  const klassen = typeof body.klassen === "string" ? body.klassen : undefined;
-  const nurInKraft = body.nurInKraft === true;
-  const zeitraumMonate = typeof body.zeitraumMonate === "number" ? body.zeitraumMonate : undefined;
-
   const encoder = new TextEncoder();
+
   const stream = new ReadableStream({
     async start(controller) {
       const write = (obj: unknown) => {
         try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`)); } catch {}
       };
       controller.enqueue(encoder.encode(": " + " ".repeat(2048) + "\n\n"));
-      write({ type: "status", message: "Initialisiere EUIPO-Suche…" });
 
       const heartbeat = setInterval(() => {
         try { controller.enqueue(encoder.encode(`: keepalive ${Date.now()}\n\n`)); } catch {}
       }, 2000);
 
       try {
-        for await (const evt of runEuipoSearchStream(stems, { klassen, nurInKraft, zeitraumMonate })) {
+        for await (const evt of runEuipoClassify(hits, stems)) {
           write(evt);
         }
       } catch (e) {

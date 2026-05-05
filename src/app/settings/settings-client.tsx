@@ -187,6 +187,12 @@ export function SettingsClient({
           >
             DPMA-Modul →
           </Link>
+          <Link
+            href="/settings/euipo"
+            className="rounded-full border border-stone-300 bg-white/70 px-4 py-1.5 text-xs font-semibold text-stone-700 hover:bg-white"
+          >
+            EUIPO-Modul →
+          </Link>
           <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">
             ← Dashboard
           </Link>
