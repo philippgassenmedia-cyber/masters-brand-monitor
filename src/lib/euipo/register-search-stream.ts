@@ -1,11 +1,14 @@
+// EUIPO-Registersuche via Gemini Grounding (kein Browser nötig).
+// Sucht per Google-Suche nach EUIPO-Registereinträgen und extrahiert Markeninformationen.
+// (EUIPO blockiert Datacenter-IPs via WAF — direkter API-Zugriff nicht möglich.)
+
 import { getSupabaseAdminClient } from "../supabase/server";
 import { matchAgainstStems } from "../dpma/matching";
 import { classifyTrademark } from "../dpma/classifier";
-import { getTopVariants } from "../dpma/variant-generator";
 import { resolveCompanyProfile } from "../resolve-company";
+import { getTopVariants } from "../dpma/variant-generator";
+import { trackGeminiCall } from "../gemini-usage";
 import type { DpmaKurierHit } from "../dpma/types";
-
-const EUIPO_SEARCH_URL = "https://euipo.europa.eu/eSearchCLPAPI/api/v1/trademark/search";
 
 export type EuipoEvent =
   | { type: "status"; message: string }
@@ -25,7 +28,6 @@ export interface EuipoSearchOptions {
   nurInKraft?: boolean;
 }
 
-/** Raw hit returned by the EUIPO API — maps 1:1 onto DpmaKurierHit for shared classify/save logic. */
 export interface EuipoRawHit {
   applicationNumber: string;
   trademarkName: string;
@@ -33,7 +35,7 @@ export interface EuipoRawHit {
   applicantName: string | null;
   applicantAddress: string | null;
   niceClasses: number[];
-  applicationDate: string | null;  // "YYYYMMDD" or ISO
+  applicationDate: string | null;
   publicationDate: string | null;
   expiryDate: string | null;
   goodsAndServices: string | null;
@@ -41,143 +43,158 @@ export interface EuipoRawHit {
   trademarkType: string | null;
 }
 
-// ── EUIPO REST API ────────────────────────────────────────────────────────────
-
-function parseEuipoDate(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  // "20200115" → "2020-01-15"
-  if (/^\d{8}$/.test(raw)) return `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
-  // Already ISO
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
-  return null;
+interface GeminiEuipoHit {
+  aktenzeichen: string;
+  markenname: string;
+  inhaber: string | null;
+  status: string | null;
+  nizza_klassen: number[];
+  register_url: string | null;
 }
 
-async function searchEuipoPage(
+// ── Gemini Grounding Search ───────────────────────────────────────────────────
+
+async function searchEuipoViaGemini(
   searchTerm: string,
-  opts: EuipoSearchOptions,
-  page: number,
-  seenAz: Set<string>,
-): Promise<{ hits: EuipoRawHit[]; total: number }> {
-  const params = new URLSearchParams({
-    basicSearch: "yes",
-    searchTerms: searchTerm,
-    language: "en",
-    page: String(page),
-    pageSize: "100",
-  });
+  klassen: string,
+): Promise<GeminiEuipoHit[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY missing");
+  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
-  if (opts.nurInKraft) {
-    params.set("trademarkStatus", "Registered,Filed,Published");
+  const query = `site:euipo.europa.eu "${searchTerm}" trademark EUTM Nizza ${klassen}`;
+
+  const systemPrompt = `Du durchsuchst das EUIPO (European Union Intellectual Property Office) Register nach EU-Markenanmeldungen (EUTM).
+Extrahiere ALLE gefundenen Marken aus den Suchergebnissen.
+
+Für jede Marke gib zurück:
+- aktenzeichen: Die EUIPO-Registernummer (z.B. "018123456789" oder "1234567")
+- markenname: Der Name der Marke
+- inhaber: Der Inhaber/Anmelder (falls sichtbar)
+- status: Status der Marke (z.B. "Registered", "Filed", "Published")
+- nizza_klassen: Array der Nizza-Klassen als Zahlen
+- register_url: URL zur EUIPO-Detailseite (Format: https://euipo.europa.eu/eSearch/#details/trademarks/NUMMER)
+
+Antworte NUR mit einem JSON-Array. Keine Einleitung, nur JSON.
+Falls keine Treffer: leeres Array [].`;
+
+  await trackGeminiCall("gemini_dpma");
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: "user", parts: [{ text: query }] }],
+        tools: [{ google_search: {} }],
+        generationConfig: { temperature: 0.1 },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+
+  if (!res.ok) throw new Error(`Gemini ${res.status} ${res.statusText}`);
+
+  const data = await res.json();
+
+  // Grounding-Chunks: URLs mit euipo.europa.eu extrahieren
+  const groundingChunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+  const euipoUrls: string[] = groundingChunks
+    .filter((c: { web?: { uri: string } }) => c.web?.uri?.includes("euipo.europa.eu"))
+    .map((c: { web: { uri: string } }) => c.web.uri);
+
+  // Aktenzeichen aus EUIPO-URLs extrahieren (Format: /trademarks/XXXXXXXXX)
+  const azFromUrls = new Set<string>();
+  for (const url of euipoUrls) {
+    const m = url.match(/\/trademarks\/(\d{7,15})/);
+    if (m) azFromUrls.add(m[1]);
   }
 
-  if (opts.klassen) {
-    const classList = opts.klassen.trim().replace(/\s+/g, ",");
-    params.set("niceClasses", classList);
+  // Gemini-Text-Antwort parsen
+  const text = data.candidates?.[0]?.content?.parts
+    ?.map((p: { text?: string }) => p.text ?? "")
+    .join("") ?? "";
+
+  const hits: GeminiEuipoHit[] = [];
+
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]) as GeminiEuipoHit[];
+      for (const h of parsed) {
+        if (h.aktenzeichen || h.markenname) {
+          hits.push({
+            aktenzeichen: String(h.aktenzeichen ?? "").replace(/\s/g, ""),
+            markenname: h.markenname ?? "",
+            inhaber: h.inhaber ?? null,
+            status: h.status ?? null,
+            nizza_klassen: Array.isArray(h.nizza_klassen) ? h.nizza_klassen.map(Number).filter((n) => n > 0) : [],
+            register_url: h.register_url ?? null,
+          });
+        }
+      }
+    } catch {}
   }
 
-  if (opts.zeitraumMonate) {
-    const from = new Date();
-    from.setMonth(from.getMonth() - opts.zeitraumMonate);
-    const yyyymmdd = from.toISOString().slice(0, 10).replace(/-/g, "");
-    params.set("applicationDateFrom", yyyymmdd);
+  // Aktenzeichen aus Grounding-URLs ergänzen
+  for (const az of azFromUrls) {
+    if (!hits.some((h) => h.aktenzeichen === az)) {
+      hits.push({
+        aktenzeichen: az,
+        markenname: `[EUTM ${az}]`,
+        inhaber: null,
+        status: null,
+        nizza_klassen: [],
+        register_url: `https://euipo.europa.eu/eSearch/#details/trademarks/${az}`,
+      });
+    }
   }
 
-  const r = await fetch(`${EUIPO_SEARCH_URL}?${params}`, {
-    headers: { Accept: "application/json", "User-Agent": "BrandMonitor/1.0" },
-    signal: AbortSignal.timeout(20_000),
-  });
-
-  if (!r.ok) {
-    const text = await r.text().catch(() => "");
-    throw new Error(`EUIPO API HTTP ${r.status}: ${text.slice(0, 200)}`);
+  // Fallback: Aktenzeichen aus Text (7–15 Ziffern)
+  for (const m of text.matchAll(/\b(\d{7,15})\b/g)) {
+    const az = m[1];
+    if (!hits.some((h) => h.aktenzeichen === az)) {
+      hits.push({
+        aktenzeichen: az,
+        markenname: `[EUTM ${az}]`,
+        inhaber: null,
+        status: null,
+        nizza_klassen: [],
+        register_url: `https://euipo.europa.eu/eSearch/#details/trademarks/${az}`,
+      });
+    }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const data: any = await r.json();
-  const total: number = data.totalResults ?? data.total ?? 0;
-  const rawList: unknown[] = data.trademarks ?? data.results ?? data.items ?? [];
-
-  const hits: EuipoRawHit[] = [];
-  for (const tm of rawList) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const t = tm as any;
-    const az: string =
-      t.applicationNumber ?? t.appNumber ?? t.id ?? t.applicationId ?? "";
-    if (!az || seenAz.has(az)) continue;
-    seenAz.add(az);
-
-    const applicants: Array<{ name?: string; address?: string }> =
-      t.applicants ?? t.holders ?? t.applicant ? [t.applicant] : [];
-    const firstApplicant = Array.isArray(applicants) ? applicants[0] : null;
-
-    hits.push({
-      applicationNumber: az,
-      trademarkName: t.trademarkName ?? t.markName ?? t.name ?? `[EUTM ${az}]`,
-      trademarkStatus: t.trademarkStatus ?? t.status ?? null,
-      applicantName: firstApplicant?.name ?? t.applicantName ?? null,
-      applicantAddress: firstApplicant?.address ?? t.applicantAddress ?? null,
-      niceClasses: Array.isArray(t.niceClasses)
-        ? (t.niceClasses as number[]).filter((n) => n > 0 && n <= 45)
-        : [],
-      applicationDate: parseEuipoDate(t.applicationDate ?? t.filingDate ?? null),
-      publicationDate: parseEuipoDate(t.publicationDate ?? t.publishDate ?? null),
-      expiryDate: parseEuipoDate(t.expiryDate ?? t.renewalDate ?? null),
-      goodsAndServices: t.goodsAndServices ?? t.goodsServices ?? t.specification ?? null,
-      representative: typeof t.representative === "string"
-        ? t.representative
-        : (t.representative?.name ?? null),
-      trademarkType: t.trademarkType ?? t.markType ?? null,
-    });
-  }
-
-  return { hits, total };
-}
-
-async function searchEuipoAll(
-  searchTerm: string,
-  opts: EuipoSearchOptions,
-  seenAz: Set<string>,
-): Promise<EuipoRawHit[]> {
-  const { hits: page1, total } = await searchEuipoPage(searchTerm, opts, 1, seenAz);
-  if (total <= 100) return page1;
-
-  const allHits = [...page1];
-  const pages = Math.min(Math.ceil(total / 100), 5); // max 500 per variant
-  for (let p = 2; p <= pages; p++) {
-    const { hits } = await searchEuipoPage(searchTerm, opts, p, seenAz);
-    allHits.push(...hits);
-  }
-  return allHits;
+  return hits;
 }
 
 // ── Classify & Save ───────────────────────────────────────────────────────────
 
-function rawHitToDpmaHit(h: EuipoRawHit): DpmaKurierHit {
-  return {
-    aktenzeichen: h.applicationNumber,
-    markenname: h.trademarkName,
-    anmelder: h.applicantName,
-    anmeldetag: h.applicationDate,
-    veroeffentlichungstag: h.publicationDate,
-    status: h.trademarkStatus,
-    nizza_klassen: h.niceClasses,
-    waren_dienstleistungen: h.goodsAndServices,
-    inhaber_anschrift: h.applicantAddress,
-    vertreter: h.representative,
-    markenform: h.trademarkType,
-    schutzdauer_bis: h.expiryDate,
-  };
-}
-
 async function* classifyAndSave(
-  hits: EuipoRawHit[],
+  hits: GeminiEuipoHit[],
   stems: string[],
 ): AsyncGenerator<EuipoEvent> {
   const db = getSupabaseAdminClient();
 
   for (let i = 0; i < hits.length; i++) {
     const raw = hits[i];
-    const hit = rawHitToDpmaHit(raw);
+    const hit: DpmaKurierHit = {
+      aktenzeichen: raw.aktenzeichen,
+      markenname: raw.markenname,
+      anmelder: raw.inhaber,
+      anmeldetag: null,
+      veroeffentlichungstag: null,
+      status: raw.status,
+      nizza_klassen: raw.nizza_klassen,
+      waren_dienstleistungen: null,
+      inhaber_anschrift: null,
+      vertreter: null,
+      markenform: null,
+      schutzdauer_bis: null,
+    };
+
     yield { type: "analyze:start", index: i + 1, total: hits.length, markenname: hit.markenname };
 
     try {
@@ -191,25 +208,13 @@ async function* classifyAndSave(
         .maybeSingle();
 
       if (existing) {
-        await db
-          .from("trademarks")
-          .update({ last_seen_at: new Date().toISOString() })
-          .eq("id", existing.id);
+        await db.from("trademarks").update({ last_seen_at: new Date().toISOString() }).eq("id", existing.id);
         yield { type: "hit:dup", aktenzeichen: hit.aktenzeichen };
         continue;
       }
 
       await new Promise((r) => setTimeout(r, 1500));
       const classification = await classifyTrademark(hit, match);
-
-      const fristEnde = hit.schutzdauer_bis ?? (hit.veroeffentlichungstag
-        ? (() => {
-            const d = new Date(hit.veroeffentlichungstag!);
-            if (isNaN(d.getTime())) return null;
-            d.setMonth(d.getMonth() + 3);
-            return d.toISOString().slice(0, 10);
-          })()
-        : null);
 
       let resolvedWebsite: string | null = null;
       if (classification.score >= 5 || match.type === "exact" || match.type === "compound") {
@@ -221,10 +226,11 @@ async function* classifyAndSave(
           if (webProfile?.company_name && !hit.anmelder) {
             hit.anmelder = webProfile.company_name as string;
           }
-        } catch {
-          // optional
-        }
+        } catch {}
       }
+
+      const registerUrl = raw.register_url
+        ?? `https://euipo.europa.eu/eSearch/#details/trademarks/${raw.aktenzeichen}`;
 
       const { data: inserted } = await db
         .from("trademarks")
@@ -233,19 +239,12 @@ async function* classifyAndSave(
           markenname: hit.markenname,
           anmelder: hit.anmelder,
           anmeldetag: hit.anmeldetag,
-          veroeffentlichungstag: hit.veroeffentlichungstag,
-          widerspruchsfrist_ende: fristEnde,
           status: hit.status,
           nizza_klassen: hit.nizza_klassen,
-          waren_dienstleistungen: hit.waren_dienstleistungen,
-          inhaber_anschrift: hit.inhaber_anschrift,
-          vertreter: hit.vertreter,
-          markenform: hit.markenform,
-          schutzdauer_bis: hit.schutzdauer_bis,
           quelle: "euipo",
           match_type: match.type,
           markenstamm: match.stem,
-          register_url: `https://euipo.europa.eu/eSearch/#details/trademarks/${hit.aktenzeichen}`,
+          register_url: registerUrl,
           relevance_score: classification.score,
           branchenbezug: classification.branchenbezug,
           prioritaet: classification.prioritaet,
@@ -267,7 +266,7 @@ async function* classifyAndSave(
     } catch (e) {
       const msg = (e as Error).message;
       if (!msg.includes("duplicate") && !msg.includes("unique")) {
-        yield { type: "error", message: `${raw.applicationNumber}: ${msg.slice(0, 150)}` };
+        yield { type: "error", message: `${raw.aktenzeichen}: ${msg.slice(0, 150)}` };
       }
     }
   }
@@ -275,11 +274,21 @@ async function* classifyAndSave(
 
 // ── Public exports ────────────────────────────────────────────────────────────
 
-/** Für /api/euipo/classify — klassifiziert bereits gesammelte Hits, streamt Events + done. */
+/** Für /api/euipo/classify — klassifiziert bereits gesammelte Hits (EuipoRawHit). */
 export async function* runEuipoClassify(
-  hits: EuipoRawHit[],
+  rawHits: EuipoRawHit[],
   stems: string[],
 ): AsyncGenerator<EuipoEvent> {
+  // EuipoRawHit → GeminiEuipoHit mapping
+  const hits: GeminiEuipoHit[] = rawHits.map((h) => ({
+    aktenzeichen: h.applicationNumber,
+    markenname: h.trademarkName,
+    inhaber: h.applicantName,
+    status: h.trademarkStatus,
+    nizza_klassen: h.niceClasses,
+    register_url: `https://euipo.europa.eu/eSearch/#details/trademarks/${h.applicationNumber}`,
+  }));
+
   let newTrademarks = 0;
   let updated = 0;
   let errorCount = 0;
@@ -297,59 +306,57 @@ export async function* runEuipoClassify(
   yield { type: "done", totalFound: hits.length, newTrademarks, updated, errors: errorCount };
 }
 
-/** Vollständiger EUIPO-Scan: API-Suche pro Cluster → sofort klassifizieren & speichern. */
+/** Vollständiger EUIPO-Scan via Gemini Grounding — pro Cluster suchen, sofort speichern. */
 export async function* runEuipoSearchStream(
   stems: string[],
   opts: EuipoSearchOptions = {},
 ): AsyncGenerator<EuipoEvent> {
+  const klassen = opts.klassen ?? "36 37 42";
   let totalFound = 0;
   let newTrademarks = 0;
   let updated = 0;
   let errorCount = 0;
+  const seenAz = new Set<string>();
 
-  yield { type: "status", message: "Initialisiere EUIPO REST-API-Suche…" };
+  yield { type: "status", message: "Starte EUIPO-Suche via Gemini Grounding…" };
 
   for (const stem of stems) {
     const variants = getTopVariants(stem, 6);
-    yield { type: "status", message: `Cluster „${stem}": ${variants.length} Varianten → EUIPO API…` };
+    yield { type: "status", message: `Cluster „${stem}": ${variants.length} Varianten → EUIPO via Google…` };
 
-    try {
-      const seenAz = new Set<string>();
-      const stemHits: EuipoRawHit[] = [];
+    const stemHits: GeminiEuipoHit[] = [];
 
-      for (const variant of variants) {
-        yield { type: "status", message: `EUIPO: suche „${variant}"…` };
-        try {
-          const hits = await searchEuipoAll(variant, opts, seenAz);
-          stemHits.push(...hits);
-          yield { type: "status", message: `„${variant}": ${hits.length} Treffer (gesamt: ${stemHits.length})` };
-        } catch (e) {
-          yield { type: "error", message: `Suche „${variant}": ${(e as Error).message.slice(0, 150)}` };
-        }
+    for (const variant of variants) {
+      yield { type: "status", message: `EUIPO: suche „${variant}"…` };
+      try {
+        const hits = await searchEuipoViaGemini(variant, klassen);
+        const newHits = hits.filter((h) => h.aktenzeichen && !seenAz.has(h.aktenzeichen));
+        newHits.forEach((h) => seenAz.add(h.aktenzeichen));
+        stemHits.push(...newHits);
+        yield { type: "status", message: `„${variant}": ${newHits.length} Treffer (Cluster gesamt: ${stemHits.length})` };
+      } catch (e) {
+        yield { type: "error", message: `Suche „${variant}": ${(e as Error).message.slice(0, 150)}` };
       }
-
-      totalFound += stemHits.length;
-      yield { type: "browser:loaded", trefferCount: stemHits.length };
-
-      if (stemHits.length === 0) {
-        yield { type: "status", message: `Cluster „${stem}": keine Treffer` };
-        continue;
-      }
-
-      yield { type: "status", message: `Cluster „${stem}": ${stemHits.length} Treffer → Analyse & Speicherung…` };
-
-      for await (const ev of classifyAndSave(stemHits, stems)) {
-        if (ev.type === "hit:new") newTrademarks++;
-        else if (ev.type === "hit:dup") updated++;
-        else if (ev.type === "error") errorCount++;
-        yield ev;
-      }
-
-      yield { type: "status", message: `✓ Cluster „${stem}" gespeichert — ${stemHits.length} verarbeitet` };
-    } catch (e) {
-      errorCount++;
-      yield { type: "error", message: `EUIPO „${stem}": ${(e as Error).message.slice(0, 200)}` };
     }
+
+    totalFound += stemHits.length;
+    yield { type: "browser:loaded", trefferCount: stemHits.length };
+
+    if (stemHits.length === 0) {
+      yield { type: "status", message: `Cluster „${stem}": keine Treffer gefunden` };
+      continue;
+    }
+
+    yield { type: "status", message: `Cluster „${stem}": ${stemHits.length} Treffer → Analyse & Speicherung…` };
+
+    for await (const ev of classifyAndSave(stemHits, stems)) {
+      if (ev.type === "hit:new") newTrademarks++;
+      else if (ev.type === "hit:dup") updated++;
+      else if (ev.type === "error") errorCount++;
+      yield ev;
+    }
+
+    yield { type: "status", message: `✓ Cluster „${stem}" gespeichert — ${stemHits.length} verarbeitet` };
   }
 
   yield { type: "browser:done", hitCount: totalFound };
