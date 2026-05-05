@@ -1297,8 +1297,8 @@ const USAGE_LABELS_ADMIN: Record<string, string> = {
 };
 
 const TESTS: { id: TestId; label: string; desc: string }[] = [
-  { id: "gemini_basic",     label: "GEMINI · BASIC",     desc: "Text-Generation ohne Tools" },
-  { id: "gemini_grounding", label: "GEMINI · GROUNDING",  desc: "Google Search Grounding (Paid Tier)" },
+  { id: "gemini_basic",     label: "GEMINI · BASIC",     desc: "Text-Generation ohne Tools (2.5-flash)" },
+  { id: "gemini_grounding", label: "GEMINI · GROUNDING",  desc: "Google Search Grounding (2.5-flash, Paid Tier)" },
   { id: "gemini_dpma",      label: "GEMINI · 2.5 FLASH",  desc: "JSON-Mode mit gemini-2.5-flash" },
   { id: "supabase_read",    label: "SUPABASE · READ",     desc: "SELECT aus settings-Tabelle" },
   { id: "supabase_write",   label: "SUPABASE · WRITE",    desc: "INSERT + DELETE (Testzeile)" },
