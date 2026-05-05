@@ -61,9 +61,9 @@ async function searchEuipoViaGemini(
 ): Promise<GeminiEuipoHit[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY missing");
-  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+  const modelId = "gemini-2.5-flash";
 
-  const query = `site:euipo.europa.eu "${searchTerm}" trademark EUTM Nizza ${klassen}`;
+  const query = `EUIPO Markenregister EUTM "${searchTerm}" Nizza ${klassen} trademark registered filed`;
 
   const systemPrompt = `Du durchsuchst das EUIPO (European Union Intellectual Property Office) Register nach EU-Markenanmeldungen (EUTM).
 Extrahiere ALLE gefundenen Marken aus den Suchergebnissen.

@@ -48,20 +48,20 @@ async function searchDpmaViaGemini(
 ): Promise<GeminiTrademarkHit[]> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY missing");
-  const modelId = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+  const modelId = "gemini-2.5-flash";
 
-  const query = `site:register.dpma.de "${searchTerm}" Marke Nizza-Klasse ${klassen}`;
+  const query = `DPMA Markenregister "${searchTerm}" Nizza-Klasse ${klassen} Aktenzeichen angemeldet eingetragen`;
 
   const systemPrompt = `Du durchsuchst das Deutsche Patent- und Markenamt (DPMA) Register nach Markenanmeldungen.
-Extrahiere ALLE gefundenen Marken aus den Suchergebnissen.
+Suche nach Marken mit dem Begriff "${searchTerm}" und extrahiere ALLE gefundenen Einträge.
 
 Für jede Marke gib zurück:
 - aktenzeichen: Die DPMA-Registernummer (z.B. "302024001234")
-- markenname: Der Name der Marke
+- markenname: Der vollständige Name der Marke
 - inhaber: Der Inhaber/Anmelder (falls sichtbar)
-- status: Status der Marke (z.B. "Eingetragen", "Angemeldet")
+- status: Status der Marke (z.B. "Eingetragen", "Angemeldet", "Registered")
 - nizza_klassen: Array der Nizza-Klassen als Zahlen
-- register_url: URL zur DPMA-Registerseite
+- register_url: URL zur DPMA-Registerseite (Format: https://register.dpma.de/DPMAregister/marke/register/AKTENZEICHEN/DE)
 
 Antworte NUR mit einem JSON-Array. Keine Einleitung, nur JSON.
 Falls keine Treffer: leeres Array [].`;
@@ -86,11 +86,13 @@ Falls keine Treffer: leeres Array [].`;
 
   const data = await res.json();
 
-  // Grounding-Chunks auswerten — URLs mit register.dpma.de extrahieren
+  // Grounding-Chunks auswerten — alle URLs + DPMA-URLs
   const groundingChunks = data.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
-  const dpmaUrls: string[] = groundingChunks
-    .filter((c: { web?: { uri: string } }) => c.web?.uri?.includes("register.dpma.de"))
-    .map((c: { web: { uri: string } }) => c.web.uri);
+  const allUrls: string[] = groundingChunks.map((c: { web?: { uri: string } }) => c.web?.uri ?? "").filter(Boolean);
+  const dpmaUrls: string[] = allUrls.filter((u) => u.includes("register.dpma.de") || u.includes("dpma.de"));
+
+  // Debug: zurückgeben wie viele Chunks gefunden
+  const _debugInfo = `[Gemini] ${groundingChunks.length} Grounding-Chunks, davon ${dpmaUrls.length} DPMA-URLs`;
 
   // Aktenzeichen aus URLs extrahieren (Format: /marke/register/XXXXXXXX/DE)
   const azFromUrls = new Set<string>();
@@ -190,6 +192,7 @@ export async function* runDpmaSearchStream(
           if (i > 0) await new Promise(r => setTimeout(r, 2000));
 
           const results = await searchDpmaViaGemini(variant, klassen);
+          yield { type: "status", message: `„${variant}": ${results.length} Treffer von Gemini` };
 
           for (const r of results) {
             if (!r.aktenzeichen || seenAz.has(r.aktenzeichen)) continue;
