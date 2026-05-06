@@ -130,8 +130,20 @@ async function runDpmaScan(scanId: string) {
       try {
         console.log(`   🔎 "${vars[vi]}"…`);
         await page.goto("https://register.dpma.de/DPMAregister/marke/basis",{timeout:45000});
-        await page.waitForTimeout(5000);
-        if(!(await page.$('input[name="marke"]'))){console.log(`      ⚠️ Kein Formular`);continue;}
+        // Accept cookie consent if present (DPMA shows banner on first visit)
+        try {
+          const consent = page.locator('button:has-text("Akzeptieren"), button:has-text("Zustimmen"), button:has-text("Alle akzeptieren"), button:has-text("Ich stimme zu"), a:has-text("Akzeptieren")');
+          await consent.first().click({timeout:4000});
+          await page.waitForTimeout(1000);
+        } catch { /* no banner */ }
+        // Wait for the actual search form (up to 15s)
+        try {
+          await page.waitForSelector('input[name="marke"]',{timeout:15000});
+        } catch {
+          const title = await page.title();
+          console.log(`      ⚠️ Kein Formular (Seite: "${title}")`);
+          continue;
+        }
         await page.fill('input[name="marke"]',vars[vi]);
         await page.fill('input[name="klassen"]',"36 37 42");
         const de=page.locator('input[name="demarke"]');if(!(await de.isChecked()))await de.check();
