@@ -111,39 +111,75 @@ Antworte AUSSCHLIESSLICH mit JSON:
 Keine Einleitung, kein Markdown.`;
 }
 
-// Lädt vergangenes Feedback um den Gemini-Prompt zu verbessern
+// Lädt vergangenes Feedback und importierte Referenz-Treffer um den Gemini-Prompt zu verbessern
 async function loadFeedbackContext(): Promise<string> {
   try {
     const { getSupabaseAdminClient } = await import("./supabase/server");
     const db = getSupabaseAdminClient();
-    const { data } = await db
+
+    let result = "";
+
+    // Manuelles Nutzer-Feedback aus hit_feedback
+    const { data: feedback } = await db
       .from("hit_feedback")
       .select("rating, correct_score, comment")
       .not("comment", "is", null)
       .order("created_at", { ascending: false })
       .limit(20);
-    if (!data?.length) return "";
 
-    const examples = data
-      .filter((f) => f.comment && f.comment.length > 5)
-      .slice(0, 10)
-      .map((f) => {
-        const label =
-          f.rating === "false_positive" ? "FEHLALARM"
-          : f.rating === "too_high" ? "ZU HOCH BEWERTET"
-          : f.rating === "too_low" ? "ZU NIEDRIG BEWERTET"
-          : f.rating === "missed" ? "ÜBERSEHEN"
-          : "KORREKT";
-        const scoreHint = f.correct_score !== null ? ` (korrekter Score: ${f.correct_score})` : "";
-        return `- ${label}${scoreHint}: ${f.comment}`;
-      })
-      .join("\n");
+    if (feedback?.length) {
+      const examples = feedback
+        .filter((f) => f.comment && f.comment.length > 5)
+        .slice(0, 10)
+        .map((f) => {
+          const label =
+            f.rating === "false_positive" ? "FEHLALARM"
+            : f.rating === "too_high" ? "ZU HOCH BEWERTET"
+            : f.rating === "too_low" ? "ZU NIEDRIG BEWERTET"
+            : f.rating === "missed" ? "ÜBERSEHEN"
+            : "KORREKT";
+          const scoreHint = f.correct_score !== null ? ` (korrekter Score: ${f.correct_score})` : "";
+          return `- ${label}${scoreHint}: ${f.comment}`;
+        })
+        .join("\n");
 
-    if (!examples) return "";
-    return `\n═══ LERNHINWEISE AUS MENSCHLICHEM FEEDBACK ═══
+      if (examples) {
+        result += `\n═══ LERNHINWEISE AUS MENSCHLICHEM FEEDBACK ═══
 Die folgenden Hinweise stammen von einem menschlichen Prüfer. Berücksichtige sie
 bei deiner Bewertung, um die gleichen Fehler nicht zu wiederholen:
 ${examples}\n`;
+      }
+    }
+
+    // Importierte Treffer eines externen Dienstleisters als Referenz-Beispiele
+    const { data: imported } = await db
+      .from("hits")
+      .select("company_name, ai_score, violation_category, status, notes, title")
+      .eq("ai_model", "imported")
+      .in("status", ["confirmed", "dismissed", "sent_to_lawyer", "resolved"])
+      .order("ai_score", { ascending: false, nullsFirst: false })
+      .limit(20);
+
+    if (imported?.length) {
+      const refs = imported
+        .map((h) => {
+          const isViolation = h.status === "confirmed" || h.status === "sent_to_lawyer";
+          const label = isViolation ? "VERLETZUNG BESTÄTIGT" : "KEIN VERSTOSS";
+          const score = h.ai_score !== null ? ` · Score ${h.ai_score}` : "";
+          const cat = h.violation_category ? ` · ${h.violation_category}` : "";
+          const name = h.company_name ?? h.title ?? "Unbekannt";
+          const note = h.notes ? ` — ${h.notes.slice(0, 120)}` : "";
+          return `- ${label}${score}${cat}: ${name}${note}`;
+        })
+        .join("\n");
+
+      result += `\n═══ REFERENZ-TREFFER (EXTERNER DIENSTLEISTER) ═══
+Diese Treffer wurden von einem Markenrechts-Experten bereits geprüft und entschieden.
+Nutze sie als Orientierung für deine Bewertungen:
+${refs}\n`;
+    }
+
+    return result;
   } catch {
     return "";
   }
