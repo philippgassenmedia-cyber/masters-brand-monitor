@@ -7,6 +7,7 @@ import { canonicalKey, resolveCompany } from "@/lib/dedupe";
 import type { Hit } from "@/lib/types";
 import { FeedbackForm } from "@/components/feedback-form";
 import { StatusForm } from "./status-form";
+import { HitNotesFeed } from "@/components/hit-notes-feed";
 
 export const dynamic = "force-dynamic";
 
@@ -187,6 +188,8 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
             </ul>
           </section>
         )}
+
+        <HitNotesFeed hitId={hit.id} />
 
         <FeedbackForm itemType="hit" itemId={hit.id} currentScore={hit.ai_score} />
 
