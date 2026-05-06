@@ -65,7 +65,7 @@ export function cleanCompany(s: string | null | undefined): string | null {
 }
 
 const NON_COMPANY_STARTS =
-  /^(der|die|das|den|dem|des|ein|eine|einem|eines|einer|wie|was|wer|warum|hier|neue|aktuelle|regelungen|informationen|firma|unternehmen|gesellschaft|verein|web|seite|fundstelle|these|dieser|dieses|diese|laut|auf|bei|mit|für|von|zur|zum|nach|über|unter|seit|durch|alle|weitere|andere|fund|zeigt|bietet|enthält|beschreibt|betrifft|nennt|listet|sucht|findet|hat|ist|wird|wurde|gehört|verwendet|nutzt|vermittelt|betreibt|befindet|stellt|operiert|ergibt|lässt|kann|soll|muss|darf)\b/i;
+  /^(der|die|das|den|dem|des|ein|eine|einem|eines|einer|wie|was|wer|warum|hier|neue|aktuelle|regelungen|informationen|firma|unternehmen|gesellschaft|verein|web|seite|fundstelle|these|dieser|dieses|diese|laut|auf|bei|mit|für|von|zur|zum|nach|über|unter|seit|durch|alle|weitere|andere|fund|zeigt|bietet|enthält|beschreibt|betrifft|nennt|listet|sucht|findet|hat|ist|wird|wurde|gehört|verwendet|nutzt|vermittelt|betreibt|befindet|stellt|operiert|ergibt|lässt|kann|soll|muss|darf|als|ihr|ihre|ihren|ihrem|ihres|ihrer|wir|uns|unsere|unserem|unser|unseren|kein|keine|keiner|keinem|keines|per|je|jede|jeder|jeden|jedem|jedes|man|beim|seinem|seinen|seiner|seinem|dein|seine|seinen)\b/i;
 
 function isPlausibleCompanyName(s: string): boolean {
   if (!s || s.length < 4) return false;
@@ -91,7 +91,11 @@ function findCompanyAroundLegal(s: string): string | null {
   LEGAL_RE.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = LEGAL_RE.exec(s)) !== null) {
-    const before = s.slice(Math.max(0, match.index - 80), match.index);
+    const rawBefore = s.slice(Math.max(0, match.index - 80), match.index);
+    // Split on sentence boundaries so words from a previous sentence don't bleed into the name.
+    // Falls back to the full rawBefore if the last clause is empty (edge case like "Dr. Müller").
+    const clauses = rawBefore.split(/[.!?;]+\s*/);
+    const before = clauses[clauses.length - 1]?.trim() || rawBefore.trim();
     const words = before.split(/\s+/).filter(Boolean);
     if (!words.length) continue;
 
