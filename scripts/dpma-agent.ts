@@ -99,6 +99,118 @@ async function processClusterHits(
   return {newC,updC,errors};
 }
 
+// ── EUIPO Search via REST API ────────────────────────────────
+async function searchEuipoApi(
+  term: string,
+  klassen: number[],
+): Promise<Array<{az:string;name:string;inhaber:string|null;status:string|null;nizzaKlassen:number[]}>> {
+  const PAGE = 100;
+  const out: Array<{az:string;name:string;inhaber:string|null;status:string|null;nizzaKlassen:number[]}> = [];
+  for (let p = 0; p < 5; p++) {
+    const url = new URL("https://euipo.europa.eu/copla/trademark/data/trademarkSearch");
+    url.searchParams.set("trademarkName", term);
+    url.searchParams.set("pageSize", String(PAGE));
+    url.searchParams.set("pageNumber", String(p));
+    url.searchParams.set("language", "de");
+    for (const k of klassen) url.searchParams.append("niceClass", String(k));
+    const r = await fetch(url.toString(), {
+      headers: {
+        "Accept": "application/json,text/plain,*/*",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Referer": "https://euipo.europa.eu/eSearch/",
+        "Origin": "https://euipo.europa.eu",
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!r.ok) throw new Error(`EUIPO API ${r.status} ${r.statusText}`);
+    const d = await r.json() as {
+      totalElements?: number;
+      trademarks?: Array<{applicationNumber?:string;trademarkName?:string;applicantName?:string;trademarkStatus?:string;niceClasses?:number[]}>;
+    };
+    const ts = d.trademarks ?? [];
+    for (const t of ts) {
+      const az = String(t.applicationNumber ?? "").replace(/\s/g, "");
+      if (!az) continue;
+      out.push({az, name: String(t.trademarkName ?? ""), inhaber: t.applicantName ?? null, status: t.trademarkStatus ?? null, nizzaKlassen: Array.isArray(t.niceClasses) ? t.niceClasses.map(Number) : []});
+    }
+    const total = d.totalElements ?? 0;
+    if (out.length >= total || ts.length < PAGE) break;
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  return out;
+}
+
+async function processEuipoClusterHits(
+  hits: Array<{az:string;name:string;inhaber:string|null;status:string|null;nizzaKlassen:number[]}>,
+  stems: string[],
+): Promise<{newC:number;updC:number;errors:number}> {
+  let newC=0,updC=0,errors=0;
+  for (let i=0; i<hits.length; i++) {
+    const h = hits[i];
+    const m = matchType(h.name||h.az, stems);
+    try {
+      const {data:ex} = await db.from("trademarks").select("id").eq("aktenzeichen",h.az).eq("markenstamm",m.stem).maybeSingle();
+      if (ex) {await db.from("trademarks").update({last_seen_at:new Date().toISOString()}).eq("id",ex.id);updC++;continue;}
+      await new Promise(r=>setTimeout(r,2000));
+      const cl = await classify(h.name||h.az, h.az, h.inhaber, h.nizzaKlassen, m);
+      await db.from("trademarks").insert({
+        aktenzeichen: h.az, markenname: h.name||`[EUTM ${h.az}]`, anmelder: h.inhaber, status: h.status,
+        nizza_klassen: h.nizzaKlassen, quelle: "euipo", match_type: m.type, markenstamm: m.stem,
+        register_url: `https://euipo.europa.eu/eSearch/#details/trademarks/${h.az}`,
+        relevance_score: cl.score, branchenbezug: cl.branchenbezug, prioritaet: cl.prioritaet, begruendung: cl.begruendung,
+      });
+      newC++;
+      console.log(`      ✅ [${i+1}/${hits.length}] ${h.name} → Score ${cl.score} (${cl.prioritaet})`);
+    } catch(e){if(!(e as Error).message.includes("duplicate"))errors++;}
+  }
+  return {newC,updC,errors};
+}
+
+async function runEuipoScan(scanId: string, klassen = [36,37,42]) {
+  console.log(`\n🌍 EUIPO Scan ${scanId.slice(0,8)}… gestartet`);
+  await db.from("scheduled_scans").update({status:"running",started_at:new Date().toISOString()}).eq("id",scanId);
+
+  const {data:sd} = await db.from("brand_stems").select("stamm").eq("aktiv",true);
+  const stems = (sd??[]).map(s=>s.stamm as string); if(!stems.length) stems.push("master");
+
+  const seenAz = new Set<string>();
+  let totalFound=0,totalNew=0,totalUpdated=0,totalErrors=0;
+
+  for (const stem of stems) {
+    console.log(`\n📌 EUIPO Cluster „${stem}":`);
+    const vars = getVariants(stem, 6);
+    const stemHits: Array<{az:string;name:string;inhaber:string|null;status:string|null;nizzaKlassen:number[]}> = [];
+
+    for (let vi=0; vi<vars.length; vi++) {
+      if (vi>0){console.log(`   ⏳ 5s Pause…`);await new Promise(r=>setTimeout(r,5000));}
+      console.log(`   🔎 "${vars[vi]}"…`);
+      try {
+        const hits = await searchEuipoApi(vars[vi], klassen);
+        const newOnes = hits.filter(h => !seenAz.has(h.az));
+        newOnes.forEach(h => seenAz.add(h.az));
+        stemHits.push(...newOnes);
+        console.log(`      ✅ ${newOnes.length} Treffer`);
+      } catch(e){totalErrors++;console.log(`      ❌ ${(e as Error).message.slice(0,80)}`);}
+    }
+
+    if (stemHits.length > 0) {
+      console.log(`   📊 ${stemHits.length} Treffer → Bewertung + Speicherung…`);
+      const {newC,updC,errors} = await processEuipoClusterHits(stemHits, stems);
+      totalFound += stemHits.length; totalNew += newC; totalUpdated += updC; totalErrors += errors;
+      console.log(`   ✓ Cluster „${stem}" gespeichert: ${newC} neu, ${updC} bekannt`);
+    } else {
+      console.log(`   — Keine neuen Treffer für „${stem}"`);
+    }
+  }
+
+  await db.from("scheduled_scans").update({
+    status: totalErrors > 0 ? "partial" : "completed",
+    completed_at: new Date().toISOString(),
+    result: {found:totalFound,new:totalNew,updated:totalUpdated,errors:totalErrors},
+  }).eq("id",scanId);
+  console.log(`\n✅ EUIPO Scan abgeschlossen: ${totalNew} neu, ${totalUpdated} aktualisiert, ${totalErrors} Fehler\n`);
+}
+
 // ── DPMA Scan ───────────────────────────────────────────────
 async function runDpmaScan(scanId: string) {
   console.log(`\n🔍 Scan ${scanId.slice(0,8)}… gestartet`);
@@ -198,10 +310,20 @@ async function runDpmaScan(scanId: string) {
 async function poll() {
   try {
     const {data} = await db.from("scheduled_scans").select("id,scan_type")
-      .eq("status","pending").in("scan_type",["dpma","all"])
+      .eq("status","pending").in("scan_type",["dpma","euipo","all"])
       .lte("scheduled_at",new Date().toISOString())
       .order("scheduled_at").limit(1);
-    if(data?.length){await runDpmaScan(data[0].id);}
+    if (data?.length) {
+      const {id, scan_type} = data[0];
+      if (scan_type === "euipo") {
+        await runEuipoScan(id);
+      } else if (scan_type === "all") {
+        await runDpmaScan(id);
+        await runEuipoScan(id); // re-sets status to running, then completes
+      } else {
+        await runDpmaScan(id);
+      }
+    }
   } catch(e){console.error(`⚠️ ${(e as Error).message}`);}
 }
 

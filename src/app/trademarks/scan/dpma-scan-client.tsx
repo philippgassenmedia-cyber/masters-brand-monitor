@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { NIZZA_BESCHREIBUNG, IMMOBILIEN_KLASSEN } from "@/lib/dpma/nizza-klassen";
-import { useScan } from "@/components/scan-context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileDpmaScan } from "@/components/mobile-dpma-scan";
 
@@ -257,9 +256,6 @@ export function DpmaScanClient() {
 }
 
 function DpmaScanClientDesktop() {
-  // Gemini stream context — used only for EUIPO scans
-  const { state: geminiState, startScan, stopScan: stopGemini } = useScan();
-
   // Local UI state
   const [source, setSource] = useState<ScanSource>("dpma");
   const [nurDE, setNurDE] = useState(true);
@@ -270,14 +266,13 @@ function DpmaScanClientDesktop() {
   const [now, setNow] = useState(Date.now());
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // Agent-based scan state (for DPMA)
+  // Agent-based scan state (DPMA + EUIPO — all via local agent)
   const [agentScan, setAgentScan] = useState<AgentScanState>(AGENT_IDLE);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const seenAzRef = useRef<Set<string>>(new Set());
   const prevAgentPhaseRef = useRef<AgentPhase>("idle");
 
   const logEndRef = useRef<HTMLDivElement>(null);
-  const prevGeminiPhaseRef = useRef<string>(geminiState.phase);
 
   const toggleKlasse = useCallback((k: number) => {
     setSelectedKlassen((prev) => {
@@ -290,20 +285,19 @@ function DpmaScanClientDesktop() {
 
   const klassenString = [...selectedKlassen].sort((a, b) => a - b).join(" ");
 
-  // Timer tick while any scan is active
-  const isAnyScanActive = agentScan.phase !== "idle" || geminiState.running;
+  // Timer tick while scan is active
   useEffect(() => {
-    if (!isAnyScanActive) return;
+    if (agentScan.phase === "idle") return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [isAnyScanActive]);
+  }, [agentScan.phase]);
 
   // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [agentScan.log, geminiState.log]);
+  }, [agentScan.log]);
 
-  // Success overlay — agent scan done
+  // Success overlay
   useEffect(() => {
     if (prevAgentPhaseRef.current !== "done" && agentScan.phase === "done") {
       setShowSuccess(true);
@@ -312,18 +306,6 @@ function DpmaScanClientDesktop() {
     }
     prevAgentPhaseRef.current = agentScan.phase;
   }, [agentScan.phase]);
-
-  // Success overlay — gemini scan done
-  useEffect(() => {
-    const isEuipoSource = geminiState.source === "euipo";
-    if (!isEuipoSource) return;
-    if (prevGeminiPhaseRef.current !== "done" && geminiState.phase === "done") {
-      setShowSuccess(true);
-      const t = setTimeout(() => setShowSuccess(false), 3000);
-      return () => clearTimeout(t);
-    }
-    prevGeminiPhaseRef.current = geminiState.phase;
-  }, [geminiState.phase, geminiState.source]);
 
   // Poll loop for agent-based DPMA scans
   const stopPoll = useCallback(() => {
@@ -341,7 +323,7 @@ function DpmaScanClientDesktop() {
           setAgentScan((prev) => {
             const log = [...prev.log];
             if (job.status === "running" && prev.jobStatus !== "running") {
-              log.push({ ts: Date.now(), tone: "ok", text: "Agent hat Auftrag aufgenommen — durchsucht DPMA-Register…" });
+              log.push({ ts: Date.now(), tone: "ok", text: "Agent hat Auftrag aufgenommen — Scan läuft…" });
             }
             if ((job.status === "completed" || job.status === "partial") && prev.jobStatus !== job.status) {
               const r = job.result as { new?: number; updated?: number; found?: number; errors?: number } | undefined;
@@ -403,7 +385,7 @@ function DpmaScanClientDesktop() {
     seenAzRef.current.clear();
   }, [stopPoll]);
 
-  const startAgentScan = useCallback(async (klassen: string) => {
+  const startAgentScan = useCallback(async (klassen: string, scanType: "dpma" | "euipo" | "all" = "dpma") => {
     seenAzRef.current.clear();
     const sinceTs = new Date().toISOString();
 
@@ -423,7 +405,7 @@ function DpmaScanClientDesktop() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           scheduled_at: sinceTs,
-          scan_type: "dpma",
+          scan_type: scanType,
           notes: `UI-Auftrag · Klassen: ${klassen}`,
         }),
       });
@@ -462,82 +444,43 @@ function DpmaScanClientDesktop() {
   }, [stopPoll, runPoll]);
 
   const start = () => {
-    const body: Record<string, unknown> = {
-      klassen: klassenString,
-      nurDE,
-      nurInKraft,
-      zeitraumMonate: zeitraumMonate || undefined,
-    };
-
     if (source === "euipo") {
-      startScan(["/api/euipo/search/stream"], body, "euipo");
+      startAgentScan(klassenString, "euipo");
     } else if (source === "both") {
-      startAgentScan(klassenString);
-      startScan(["/api/euipo/search/stream"], body, "euipo");
+      startAgentScan(klassenString, "all");
     } else {
-      startAgentScan(klassenString);
+      startAgentScan(klassenString, "dpma");
     }
   };
 
-  const stop = () => {
-    if (source === "dpma") {
-      stopAgentScan();
-    } else if (source === "euipo") {
-      stopGemini();
-    } else {
-      stopAgentScan();
-      stopGemini();
-    }
-  };
+  const stop = () => stopAgentScan();
 
   // Cleanup poll on unmount
   useEffect(() => () => stopPoll(), [stopPoll]);
 
-  // Determine display state
-  const isDpmaActive = agentScan.phase !== "idle";
-  const isEuipoActive = geminiState.source === "euipo" && (geminiState.running || geminiState.phase === "done");
-
-  const running = (source === "dpma" && (agentScan.phase === "pending" || agentScan.phase === "running"))
-    || (source === "euipo" && geminiState.running)
-    || (source === "both" && (agentScan.phase === "pending" || agentScan.phase === "running" || geminiState.running));
-
-  const activeLog: AgentLogLine[] = source === "euipo"
-    ? geminiState.log.map((l) => ({ ts: l.ts, tone: l.tone as AgentLogLine["tone"], text: l.text }))
-    : agentScan.log;
-
-  const newHits: NewHit[] = source === "euipo"
-    ? geminiState.rawHits.map((h: Record<string, unknown>) => ({
-        id: String(h.id ?? ""),
-        aktenzeichen: String(h.aktenzeichen ?? ""),
-        markenname: String(h.markenname ?? ""),
-        score: (h.score as number | null) ?? null,
-        website: (h.website as string | null) ?? null,
-        quelle: "euipo",
-      }))
-    : agentScan.hits;
-
-  const startedAt = source === "euipo" ? geminiState.startedAt : agentScan.startedAt;
-  const elapsed = startedAt ? now - startedAt : 0;
-  const isFiltersHidden = (isDpmaActive || isEuipoActive) && (agentScan.phase !== "idle" || geminiState.phase !== "idle");
+  // Determine display state — all sources use the agent
+  const isActive = agentScan.phase !== "idle";
+  const running = agentScan.phase === "pending" || agentScan.phase === "running";
+  const elapsed = agentScan.startedAt ? now - agentScan.startedAt : 0;
+  const isFiltersHidden = isActive;
+  const totalNew = agentScan.hits.length;
 
   // Status text
+  const registerLabel = source === "dpma" ? "DPMA-Register" : source === "euipo" ? "EUIPO-Register" : "DPMA + EUIPO";
   let statusTitle = "Bereit";
   let statusSub = source === "dpma"
     ? "Sucht direkt im DPMA-Register — lokaler Agent erforderlich"
     : source === "euipo"
-    ? "Suche via Gemini Grounding (Google-Index)"
-    : "DPMA via lokalem Agent · EUIPO via Gemini Grounding";
+    ? "Sucht direkt im EUIPO-Register — lokaler Agent erforderlich"
+    : "DPMA + EUIPO via lokalem Agenten";
 
   if (agentScan.phase === "pending") {
     statusTitle = "Warte auf lokalen Agenten…";
     statusSub = "Agent muss auf deinem Rechner laufen (alle 30s Polling)";
   } else if (agentScan.phase === "running") {
-    statusTitle = "Agent durchsucht DPMA-Register";
+    statusTitle = `Agent durchsucht ${registerLabel}`;
     statusSub = `Verstrichen: ${formatDuration(elapsed)}`;
-  } else if (source === "euipo" && geminiState.running) {
-    statusTitle = "Durchsuche EUIPO via Gemini…";
-    statusSub = `Verstrichen: ${formatDuration(elapsed)}`;
-  } else if (agentScan.phase === "done" || (source === "euipo" && geminiState.phase === "done")) {
+  } else if (agentScan.phase === "done") {
     statusTitle = "Suche abgeschlossen";
     statusSub = `Dauer: ${formatDuration(elapsed)}`;
   } else if (agentScan.phase === "error") {
@@ -545,14 +488,8 @@ function DpmaScanClientDesktop() {
     statusSub = "Bitte erneut versuchen";
   }
 
-  const dpmaHits = agentScan.hits.length;
-  const euipoHits = geminiState.newHits;
-  const totalNew = source === "dpma" ? dpmaHits : source === "euipo" ? euipoHits : dpmaHits + euipoHits;
-
-  const euipoPct = geminiState.progress.total > 0 ? geminiState.progress.current / geminiState.progress.total : 0;
-
   const isAgentIdle = agentScan.phase === "idle";
-  const isDone = agentScan.phase === "done" || agentScan.phase === "error" || (source === "euipo" && geminiState.phase === "done" && !geminiState.running);
+  const isDone = agentScan.phase === "done" || agentScan.phase === "error";
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -592,11 +529,9 @@ function DpmaScanClientDesktop() {
               ))}
             </div>
             <span className="ml-3 text-[11px] text-stone-400">
-              {source === "dpma"
-                ? "Echter Register-Zugriff via lokalem Playwright-Agenten"
-                : source === "euipo"
-                ? "Google-Index via Gemini Grounding"
-                : "Agent für DPMA · Grounding für EUIPO"}
+              {source === "both"
+                ? "DPMA + EUIPO nacheinander via lokalem Agenten"
+                : "Echter Register-Zugriff via lokalem Playwright-Agenten"}
             </span>
           </div>
 
@@ -743,8 +678,6 @@ function DpmaScanClientDesktop() {
             {totalNew > 0 && (
               <div className="flex items-center gap-3 text-right">
                 <MiniStat label="Neu" value={totalNew} tone="emerald" />
-                {geminiState.updatedCount > 0 && <MiniStat label="Bekannt" value={geminiState.updatedCount} />}
-                {geminiState.errors > 0 && <MiniStat label="Fehler" value={geminiState.errors} tone="red" />}
               </div>
             )}
             {isAgentIdle && !running ? (
@@ -771,16 +704,6 @@ function DpmaScanClientDesktop() {
             ) : null}
           </div>
         </div>
-
-        {/* Progress bar — EUIPO Gemini only */}
-        {isEuipoActive && geminiState.progress.total > 0 && (
-          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-stone-200/70">
-            <div
-              className={`h-full rounded-full transition-all duration-500 ${geminiState.phase === "done" ? "bg-emerald-500" : "bg-gradient-to-r from-stone-700 to-stone-900"}`}
-              style={{ width: `${Math.max(2, euipoPct * 100)}%` }}
-            />
-          </div>
-        )}
 
         {/* Pending agent hint */}
         {agentScan.phase === "pending" && (
@@ -813,13 +736,13 @@ function DpmaScanClientDesktop() {
       )}
 
       {/* Log + Results — shown while active or after done */}
-      {(isDpmaActive || isEuipoActive) && activeLog.length > 0 && (
+      {isActive && agentScan.log.length > 0 && (
         <section className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           {/* Log */}
           <div className="glass flex min-h-0 flex-col p-4">
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">Live-Log</h2>
             <div className="scroll-area min-h-0 flex-1 overflow-y-auto rounded-xl bg-stone-950 p-3 font-mono text-[11px] text-stone-200">
-              {activeLog.map((l, i) => (
+              {agentScan.log.map((l, i) => (
                 <div key={i} className={l.tone === "err" ? "text-rose-300" : l.tone === "warn" ? "text-amber-300" : l.tone === "ok" ? "text-emerald-300" : "text-stone-200"}>
                   <span className="mr-2 text-stone-500">{new Date(l.ts).toLocaleTimeString("de-DE")}</span>
                   {l.text}
@@ -832,17 +755,17 @@ function DpmaScanClientDesktop() {
           {/* Neue Treffer */}
           <div className="glass flex min-h-0 flex-col p-4">
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">
-              Neue Marken · {newHits.length}
+              Neue Marken · {agentScan.hits.length}
             </h2>
             <div className="scroll-area min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-              {newHits.length === 0 && (
+              {agentScan.hits.length === 0 && (
                 <div className="flex h-full items-center justify-center text-xs text-stone-500">
                   {agentScan.phase === "pending"
                     ? "Warte auf Agenten…"
                     : "Noch keine neuen Marken gefunden."}
                 </div>
               )}
-              {newHits.map((h) => {
+              {agentScan.hits.map((h) => {
                 const isEuipo = h.quelle === "euipo";
                 const registerUrl = isEuipo
                   ? `https://euipo.europa.eu/eSearch/#details/trademarks/${h.aktenzeichen}`
