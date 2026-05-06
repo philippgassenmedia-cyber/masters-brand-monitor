@@ -2,7 +2,7 @@ import { getSupabaseServerClient, getSupabaseAdminClient } from "@/lib/supabase/
 import { searchWeb, SearchBudgetExceededError, SearchApiKeyError, SearchRateLimitError, type SearchRegion } from "@/lib/search";
 import { analyzeHitWithGemini } from "@/lib/gemini";
 import { scrapeImpressum } from "@/lib/impressum-scraper";
-import { loadExcludedDomains, isExcluded, hostOf, BRAND_NAME } from "@/lib/brand";
+import { loadExcludedDomains, isExcluded, hostOf, BRAND_NAME, isAcademicHit } from "@/lib/brand";
 
 interface ScanParams {
   region: SearchRegion;
@@ -204,6 +204,7 @@ export async function POST(req: Request) {
               try {
                 const host = hostOf(result.url);
                 if (!host || isExcluded(result.url, excluded)) continue;
+                if (isAcademicHit({ domain: host, title: result.title, snippet: result.snippet })) continue;
 
                 // Check if already exists
                 const { data: existing } = await db

@@ -1,5 +1,5 @@
 import { cleanCompany, extractCompanyFromText, normalizeAddressKey } from "./profile-cleanup";
-import { isOwnerCompany } from "./brand";
+import { isOwnerCompany, isAcademicHit } from "./brand";
 import { isAggregatorDomain } from "./resolve-company";
 import type { Hit } from "./types";
 
@@ -165,8 +165,9 @@ function scoreHit(h: Hit): number {
 }
 
 export function hitBelongsToOwner(
-  h: Pick<Hit, "company_name" | "ai_reasoning" | "snippet" | "title">,
+  h: Pick<Hit, "company_name" | "ai_reasoning" | "snippet" | "title" | "domain">,
 ): boolean {
+  if (isAcademicHit({ domain: h.domain, title: h.title, snippet: h.snippet })) return true;
   const candidates = [
     cleanCompany(h.company_name),
     extractCompanyFromText(h.ai_reasoning),
