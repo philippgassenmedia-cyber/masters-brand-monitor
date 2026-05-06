@@ -194,17 +194,16 @@ async function runEuipoScan(scanId: string, klassen = [36,37,42]) {
         newOnes.forEach(h => seenAz.add(h.az));
         stemHits.push(...newOnes);
         console.log(`      ✅ ${newOnes.length} Treffer`);
+        // Sofort klassifizieren + speichern
+        if (newOnes.length > 0) {
+          console.log(`   📊 ${newOnes.length} Treffer → Klassifizierung + Speicherung…`);
+          const {newC,updC,errors} = await processEuipoClusterHits(newOnes, stems);
+          totalFound += newOnes.length; totalNew += newC; totalUpdated += updC; totalErrors += errors;
+          console.log(`   ✓ ${newC} neu gespeichert, ${updC} bekannt`);
+        }
       } catch(e){totalErrors++;console.log(`      ❌ ${(e as Error).message.slice(0,80)}`);}
     }
-
-    if (stemHits.length > 0) {
-      console.log(`   📊 ${stemHits.length} Treffer → Bewertung + Speicherung…`);
-      const {newC,updC,errors} = await processEuipoClusterHits(stemHits, stems);
-      totalFound += stemHits.length; totalNew += newC; totalUpdated += updC; totalErrors += errors;
-      console.log(`   ✓ Cluster „${stem}" gespeichert: ${newC} neu, ${updC} bekannt`);
-    } else {
-      console.log(`   — Keine neuen Treffer für „${stem}"`);
-    }
+    if (stemHits.length === 0) console.log(`   — Keine neuen Treffer für „${stem}"`);
   }
 
   await db.from("scheduled_scans").update({
@@ -235,14 +234,13 @@ async function runDpmaScan(scanId: string) {
   for (const stem of stems) {
     console.log(`\n📌 Cluster „${stem}":`);
     const vars = getVariants(stem,6);
-    const stemHits: Array<{az:string;name:string;st:string|null}> = [];
 
-    // Phase 1: DPMA-Register durchsuchen
     for (let vi=0;vi<vars.length;vi++) {
       if(vi>0){console.log(`   ⏳ 15s Pause…`);await new Promise(r=>setTimeout(r,15000));}
       const ctx = await browser.newContext({userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"});
       const page = await ctx.newPage();
       await page.addInitScript(()=>{Object.defineProperty(navigator,"webdriver",{get:()=>false});(window as unknown as Record<string,unknown>).chrome={runtime:{}};});
+      const varHits: Array<{az:string;name:string;st:string|null}> = [];
       try {
         console.log(`   🔎 "${vars[vi]}"…`);
         await page.goto("https://register.dpma.de/DPMAregister/marke/basis",{timeout:45000});
@@ -276,7 +274,7 @@ async function runDpmaScan(scanId: string) {
             const cells=await row.$$("td");if(cells.length<4)continue;
             const t:string[]=[];for(const cl of cells)t.push((await cl.textContent())?.trim().replace(/\s+/g," ")??"");
             const az=t[3]?.replace(/\s/g,"")??"";if(!az||!/^\d+$/.test(az)||seenAz.has(az))continue;
-            seenAz.add(az);stemHits.push({az,name:t[4]??"",st:t[5]??null});c++;
+            seenAz.add(az);varHits.push({az,name:t[4]??"",st:t[5]??null});c++;
           }
           const nx=await page.$('a:has-text(">>"), a:has-text("nächste")');if(!nx)break;
           try{await nx.click();await page.waitForLoadState("networkidle",{timeout:20000});await page.waitForTimeout(2000);}catch{break;}
@@ -284,19 +282,14 @@ async function runDpmaScan(scanId: string) {
         console.log(`      ✅ ${c} Treffer`);
       } catch(e){totalErrors++;console.log(`      ❌ ${(e as Error).message.slice(0,80)}`);}
       await page.close(); await ctx.close();
-    }
 
-    // Phase 2: Details + Bewertung + DB-Speicherung für diesen Cluster
-    if (stemHits.length > 0) {
-      console.log(`   📊 ${stemHits.length} Treffer → Details + Bewertung + Speicherung…`);
-      const {newC,updC,errors} = await processClusterHits(stemHits, stems, dPage);
-      totalFound += stemHits.length;
-      totalNew += newC;
-      totalUpdated += updC;
-      totalErrors += errors;
-      console.log(`   ✓ Cluster „${stem}" gespeichert: ${newC} neu, ${updC} bekannt`);
-    } else {
-      console.log(`   — Keine neuen Treffer für „${stem}"`);
+      // Sofort klassifizieren + speichern — nicht warten bis alle Varianten durch sind
+      if (varHits.length > 0) {
+        console.log(`   📊 ${varHits.length} Treffer → Klassifizierung + Speicherung…`);
+        const {newC,updC,errors} = await processClusterHits(varHits, stems, dPage);
+        totalFound += varHits.length; totalNew += newC; totalUpdated += updC; totalErrors += errors;
+        console.log(`   ✓ ${newC} neu gespeichert, ${updC} bekannt`);
+      }
     }
   }
 
