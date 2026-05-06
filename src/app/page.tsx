@@ -17,11 +17,9 @@ interface ScanRun {
   started_at: string;
   finished_at: string | null;
   region: string | null;
-  triggered_by: string | null;
-  queries_run: number;
-  raw_results: number;
   new_hits: number;
   updated_hits: number;
+  raw_results: number;
   status: string;
 }
 
@@ -79,26 +77,34 @@ const STATUS_LABEL: Record<HitStatus, string> = {
   resolved: "Erledigt",
 };
 
+const SOURCE_BADGE: Record<string, string> = {
+  web: "bg-sky-100 text-sky-700",
+  dpma: "bg-violet-100 text-violet-700",
+  euipo: "bg-indigo-100 text-indigo-700",
+  import: "bg-stone-100 text-stone-500",
+};
+
 interface KanbanCard {
   id: string;
   title: string;
-  domain: string;
+  sub: string;        // domain for web, aktenzeichen for trademarks
   score: number | null;
   status: HitStatus;
   city: string | null;
   lastSeen: string;
   totalCount: number;
+  source: string;     // "web" | "dpma" | "euipo" | "import"
+  href: string;
 }
 
 function KanbanCardItem({ card }: { card: KanbanCard }) {
+  const sourceLabel = card.source === "dpma" ? "DPMA" : card.source === "euipo" ? "EUIPO" : card.source === "import" ? "Import" : "Web";
   return (
     <Link
-      href={`/hits/${card.id}`}
+      href={card.href}
       className="flex items-start gap-3 rounded-xl border border-white/60 bg-white/50 p-3 transition hover:bg-white/80 hover:shadow-sm"
     >
-      <span
-        className={`mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${scoreBg(card.score)}`}
-      >
+      <span className={`mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${scoreBg(card.score)}`}>
         {card.score ?? "—"}
       </span>
       <div className="min-w-0 flex-1">
@@ -112,14 +118,15 @@ function KanbanCardItem({ card }: { card: KanbanCard }) {
             </span>
           )}
         </div>
-        <p className="mt-0.5 truncate text-[11px] text-stone-400">{card.domain}</p>
-        <div className="mt-1.5 flex items-center gap-2">
-          <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${STATUS_CHIP[card.status]}`}>
+        <p className="mt-0.5 truncate text-[11px] text-stone-400">{card.sub}</p>
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${SOURCE_BADGE[card.source] ?? SOURCE_BADGE.web}`}>
+            {sourceLabel}
+          </span>
+          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${STATUS_CHIP[card.status]}`}>
             {STATUS_LABEL[card.status]}
           </span>
-          {card.city && (
-            <span className="text-[10px] text-stone-400">{card.city}</span>
-          )}
+          {card.city && <span className="text-[10px] text-stone-400">{card.city}</span>}
           <span className="ml-auto text-[10px] text-stone-300">
             {new Date(card.lastSeen).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })}
           </span>
@@ -134,46 +141,44 @@ function KanbanColumn({
   color,
   cards,
   total,
-  allHref,
+  fullView,
   emptyText,
 }: {
   title: string;
   color: string;
   cards: KanbanCard[];
   total: number;
-  allHref: string;
+  fullView: boolean;
   emptyText: string;
 }) {
-  const shown = cards.slice(0, 15);
+  // Default: max 15 cards; full view: all
+  const shown = fullView ? cards : cards.slice(0, 15);
+  const hidden = total - shown.length;
+
   return (
     <div className="glass flex min-h-[200px] flex-col rounded-2xl overflow-hidden">
-      {/* Column header */}
       <div className={`flex items-center justify-between border-b border-white/60 px-4 py-3 ${color}`}>
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-stone-900">{title}</h2>
-          <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] font-bold text-stone-700">
-            {total}
-          </span>
+          <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] font-bold text-stone-700">{total}</span>
         </div>
-        <Link href={allHref} className="text-[10px] font-medium text-stone-500 hover:text-stone-800">
-          Alle →
-        </Link>
+        {!fullView && total > 0 && (
+          <Link href="/?view=all" className="text-[10px] font-medium text-stone-500 hover:text-stone-800">
+            Alle →
+          </Link>
+        )}
       </div>
-
-      {/* Cards */}
-      <div className="flex-1 space-y-2 overflow-y-auto p-3">
+      <div className={`flex-1 space-y-2 overflow-y-auto p-3 ${fullView ? "max-h-[70vh]" : ""}`}>
         {shown.length === 0 && (
           <p className="px-1 py-6 text-center text-xs text-stone-400">{emptyText}</p>
         )}
-        {shown.map((c) => (
-          <KanbanCardItem key={c.id} card={c} />
-        ))}
-        {total > shown.length && (
+        {shown.map((c) => <KanbanCardItem key={`${c.source}-${c.id}`} card={c} />)}
+        {!fullView && hidden > 0 && (
           <Link
-            href={allHref}
+            href="/?view=all"
             className="block rounded-xl border border-dashed border-stone-200 py-2 text-center text-xs text-stone-400 hover:border-stone-400 hover:text-stone-600"
           >
-            + {total - shown.length} weitere anzeigen
+            + {hidden} weitere
           </Link>
         )}
       </div>
@@ -181,66 +186,103 @@ function KanbanColumn({
   );
 }
 
-export default async function DashboardPage() {
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
   const supabase = await getSupabaseServerClient();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) redirect("/login");
 
-  const [hitsRes, kpiRes, runsRes, dpmaRes] = await Promise.all([
+  const params = await searchParams;
+  const fullView = params.view === "all";
+
+  const [hitsRes, kpiRes, runsRes, tmRes] = await Promise.all([
     supabase
       .from("hits")
-      .select("id, domain, title, snippet, ai_score, status, company_name, address, subject_company_address, ai_reasoning, first_seen_at, last_seen_at, url")
+      .select("id, domain, title, snippet, ai_score, status, company_name, address, subject_company_address, ai_reasoning, first_seen_at, last_seen_at, url, ai_model")
       .order("ai_score", { ascending: false, nullsFirst: false })
       .order("first_seen_at", { ascending: false })
-      .limit(500),
+      .limit(1000),
     supabase.from("hits").select("ai_score, status, first_seen_at, domain"),
     supabase
       .from("scan_runs")
-      .select("id, started_at, finished_at, region, triggered_by, queries_run, raw_results, new_hits, updated_hits, status")
+      .select("id, started_at, finished_at, region, new_hits, updated_hits, raw_results, status")
       .order("started_at", { ascending: false })
       .limit(8),
     supabase
       .from("trademarks")
-      .select("id, markenname, aktenzeichen, relevance_score, match_type, prioritaet, widerspruchsfrist_ende, status, created_at")
+      .select("id, markenname, aktenzeichen, relevance_score, workflow_status, quelle, prioritaet, widerspruchsfrist_ende, created_at")
       .order("relevance_score", { ascending: false, nullsFirst: false })
-      .limit(5),
+      .limit(1000),
   ]);
 
-  const rawHits = (hitsRes.data ?? []) as Hit[];
+  // ── Build unified kanban cards ────────────────────────────────────────────
+
+  // Web / import hits
+  const rawHits = (hitsRes.data ?? []) as (Hit & { ai_model?: string | null })[];
   const groups = groupHits(rawHits);
 
-  // Build kanban cards from groups
-  const allCards: KanbanCard[] = groups.map((g) => ({
+  const hitCards: KanbanCard[] = groups.map((g) => ({
     id: g.primary.id,
     title: resolveCompany(g.primary) ?? g.primary.domain,
-    domain: g.primary.domain,
+    sub: g.primary.domain,
     score: g.maxScore,
     status: g.primary.status,
     city: extractCity(g.primary.address ?? g.primary.subject_company_address),
     lastSeen: g.primary.last_seen_at,
     totalCount: g.totalCount,
+    source: (g.primary as Hit & { ai_model?: string | null }).ai_model === "imported" ? "import" : "web",
+    href: `/hits/${g.primary.id}`,
   }));
 
-  const openCards = allCards.filter((c) => c.status === "new");
-  const reviewCards = allCards.filter((c) => c.status === "reviewing");
-  const doneCards = allCards.filter((c) =>
-    ["confirmed", "dismissed", "sent_to_lawyer", "resolved"].includes(c.status)
+  // DPMA / EUIPO trademarks
+  const tmCards: KanbanCard[] = (tmRes.data ?? []).map((t) => ({
+    id: t.id,
+    title: t.markenname,
+    sub: t.aktenzeichen,
+    score: t.relevance_score ?? null,
+    status: (t.workflow_status ?? "new") as HitStatus,
+    city: null,
+    lastSeen: t.created_at,
+    totalCount: 1,
+    source: (t.quelle ?? "dpma").toLowerCase().includes("euipo") ? "euipo" : "dpma",
+    href: `/trademarks/${t.id}`,
+  }));
+
+  // Merge and sort by score
+  const allCards = [...hitCards, ...tmCards].sort(
+    (a, b) => (b.score ?? -1) - (a.score ?? -1),
   );
 
-  // KPI
-  const all = (kpiRes.data ?? []) as Array<{ ai_score: number | null; status: HitStatus; first_seen_at: string; domain: string }>;
-  const total = all.length;
-  const high = all.filter((h) => (h.ai_score ?? 0) >= 7).length;
-  const medium = all.filter((h) => (h.ai_score ?? 0) >= 4 && (h.ai_score ?? 0) < 7).length;
-  const uniqueDomains = new Set(all.map((h) => h.domain)).size;
-  const allSeries = buildDailySeries(all.map((h) => h.first_seen_at));
-  const highSeries = buildDailySeries(all.filter((h) => (h.ai_score ?? 0) >= 7).map((h) => h.first_seen_at));
+  // Default view: hide score < 5
+  const visibleCards = fullView ? allCards : allCards.filter((c) => (c.score ?? 0) >= 5);
+
+  const openCards = visibleCards.filter((c) => c.status === "new");
+  const reviewCards = visibleCards.filter((c) => c.status === "reviewing");
+  const doneCards = visibleCards.filter((c) =>
+    ["confirmed", "dismissed", "sent_to_lawyer", "resolved"].includes(c.status),
+  );
+
+  // Total counts (always from full set for KPIs)
+  const allOpen = allCards.filter((c) => c.status === "new").length;
+  const allReview = allCards.filter((c) => c.status === "reviewing").length;
+  const allDone = allCards.filter((c) =>
+    ["confirmed", "dismissed", "sent_to_lawyer", "resolved"].includes(c.status),
+  ).length;
+
+  // KPI from hits table
+  const kpiHits = (kpiRes.data ?? []) as Array<{ ai_score: number | null; status: HitStatus; first_seen_at: string; domain: string }>;
+  const total = kpiHits.length + (tmRes.data ?? []).length;
+  const high = [...kpiHits, ...(tmRes.data ?? []).map((t) => ({ ai_score: t.relevance_score, status: t.workflow_status as HitStatus, first_seen_at: t.created_at, domain: "" }))]
+    .filter((h) => (h.ai_score ?? 0) >= 7).length;
+  const allTs = [...kpiHits.map((h) => h.first_seen_at), ...(tmRes.data ?? []).map((t) => t.created_at)];
+  const allSeries = buildDailySeries(allTs);
+  const highSeries = buildDailySeries([...kpiHits.filter((h) => (h.ai_score ?? 0) >= 7).map((h) => h.first_seen_at)]);
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const newThisWeek = all.filter((h) => new Date(h.first_seen_at).getTime() >= sevenDaysAgo).length;
-  const newSeries = buildDailySeries(all.filter((h) => new Date(h.first_seen_at).getTime() >= sevenDaysAgo).map((h) => h.first_seen_at), 7);
-  const openCount = all.filter((h) => h.status === "new").length;
-  const reviewCount = all.filter((h) => h.status === "reviewing").length;
-  const doneCount = all.filter((h) => ["confirmed", "dismissed", "sent_to_lawyer", "resolved"].includes(h.status)).length;
+  const newThisWeek = allTs.filter((t) => new Date(t).getTime() >= sevenDaysAgo).length;
+  const newSeries = buildDailySeries(allTs.filter((t) => new Date(t).getTime() >= sevenDaysAgo), 7);
 
   const runs = (runsRes.data ?? []) as ScanRun[];
   const lastRun = runs[0];
@@ -248,16 +290,16 @@ export default async function DashboardPage() {
   return (
     <AppShell user={auth.user}>
       {lastRun?.status === "running" && (
-        <RunningBanner newHits={lastRun.new_hits} startedAt={lastRun.started_at} region={lastRun.region} />
+        <RunningBanner newHits={lastRun.new_hits} startedAt={lastRun.started_at} region={lastRun.region ?? null} />
       )}
 
-      {/* KPI-Reihe */}
+      {/* KPI */}
       <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiCard label="Gesamt" value={total} href="/hits" trend={allSeries} />
-        <KpiCard label="Offen" value={openCount} href="/hits?status=new" tone="brand" />
-        <KpiCard label="In Bearbeitung" value={reviewCount} href="/hits?status=reviewing" tone="amber" />
-        <KpiCard label="Erledigt" value={doneCount} href="/hits?status=all" tone="emerald" />
-        <KpiCard label="Hoch (≥7)" value={high} href="/hits?minScore=7" tone="red" trend={highSeries} hint="Score 7–10" />
+        <KpiCard label="Offen" value={allOpen} tone="brand" />
+        <KpiCard label="In Bearbeitung" value={allReview} tone="amber" />
+        <KpiCard label="Erledigt" value={allDone} tone="emerald" />
+        <KpiCard label="Hoch (≥7)" value={high} tone="red" trend={highSeries} hint="Score 7–10" />
         <KpiCard label="Neu (7 Tage)" value={newThisWeek} tone="slate" trend={newSeries} />
       </section>
 
@@ -275,146 +317,112 @@ export default async function DashboardPage() {
           <div className="flex items-center gap-2">
             <EnrichHitsButton />
             <AgentDownloadButton />
-            <Link
-              href="/scan"
-              className="rounded-xl bg-stone-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-stone-800"
-            >
+            <Link href="/scan" className="rounded-xl bg-stone-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-stone-800">
               Live-Scan →
             </Link>
           </div>
         </div>
       </section>
 
-      {/* ── Kanban-Board ─────────────────────────────────────────────────────── */}
-      <section className="mt-5 grid gap-4 lg:grid-cols-3">
+      {/* Kanban header */}
+      <div className="mt-5 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-semibold text-stone-700">
+            {fullView ? "Alle Treffer" : "Treffer (Score ≥ 5)"}
+          </h2>
+          {/* Source legend */}
+          <div className="flex items-center gap-1.5">
+            {(["web", "dpma", "euipo", "import"] as const).map((s) => (
+              <span key={s} className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${SOURCE_BADGE[s]}`}>
+                {s === "web" ? "Web" : s === "dpma" ? "DPMA" : s === "euipo" ? "EUIPO" : "Import"}
+              </span>
+            ))}
+          </div>
+        </div>
+        {fullView ? (
+          <Link href="/" className="rounded-full border border-stone-200 px-3 py-1 text-xs text-stone-500 hover:text-stone-800">
+            ← Kompaktansicht
+          </Link>
+        ) : (
+          <Link href="/?view=all" className="rounded-full border border-stone-200 px-3 py-1 text-xs text-stone-500 hover:text-stone-800">
+            Alle anzeigen (inkl. Score &lt; 5)
+          </Link>
+        )}
+      </div>
+
+      {/* Kanban-Board */}
+      <section className="mt-2 grid gap-4 lg:grid-cols-3">
         <KanbanColumn
           title="Offen"
           color="bg-stone-50/60"
           cards={openCards}
-          total={openCount}
-          allHref="/hits?status=new"
+          total={openCards.length}
+          fullView={fullView}
           emptyText="Keine offenen Treffer."
         />
         <KanbanColumn
           title="In Bearbeitung"
           color="bg-amber-50/60"
           cards={reviewCards}
-          total={reviewCount}
-          allHref="/hits?status=reviewing"
+          total={reviewCards.length}
+          fullView={fullView}
           emptyText="Keine Treffer in Bearbeitung."
         />
         <KanbanColumn
           title="Bearbeitet"
           color="bg-emerald-50/40"
           cards={doneCards}
-          total={doneCount}
-          allHref="/hits?status=all"
+          total={doneCards.length}
+          fullView={fullView}
           emptyText="Noch keine abgeschlossenen Treffer."
         />
       </section>
 
-      {/* DPMA-Register */}
-      {(dpmaRes.data ?? []).length > 0 && (
+      {/* Scan-Historie (nur in Kompaktansicht) */}
+      {!fullView && (
         <section className="glass mt-5 overflow-hidden">
           <div className="flex items-center justify-between border-b border-white/60 px-5 py-3">
-            <h2 className="text-sm font-semibold text-stone-900">
-              DPMA-Register
-              <span className="ml-2 text-stone-500">· Top {(dpmaRes.data ?? []).length}</span>
-            </h2>
-            <Link href="/trademarks" className="text-xs text-stone-500 hover:text-stone-800">Alle →</Link>
+            <h2 className="text-sm font-semibold text-slate-900">Scan-Historie</h2>
+            <Sparkline
+              data={runs.slice().reverse().map((r) => r.new_hits)}
+              color="#78716c"
+              width={140}
+              height={32}
+            />
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-[10px] uppercase tracking-wider text-stone-500">
+              <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
                 <tr>
-                  <th className="px-5 py-3 font-semibold">Score</th>
-                  <th className="px-5 py-3 font-semibold">Marke</th>
-                  <th className="px-5 py-3 font-semibold hidden md:table-cell">Match</th>
-                  <th className="px-5 py-3 font-semibold hidden md:table-cell">Priorität</th>
-                  <th className="px-5 py-3 font-semibold">Frist</th>
+                  <th className="px-5 py-3 font-semibold">Start</th>
+                  <th className="px-5 py-3 font-semibold hidden md:table-cell">Region</th>
+                  <th className="px-5 py-3 font-semibold hidden md:table-cell">Roh</th>
+                  <th className="px-5 py-3 font-semibold">Neu</th>
+                  <th className="px-5 py-3 font-semibold">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {(dpmaRes.data ?? []).map((t) => {
-                  const days = t.widerspruchsfrist_ende
-                    ? Math.ceil((new Date(t.widerspruchsfrist_ende).getTime() - Date.now()) / 86_400_000)
-                    : null;
-                  return (
-                    <tr key={t.id} className="border-t border-white/50 transition hover:bg-white/50">
-                      <td className="px-5 py-3">
-                        <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold ${(t.relevance_score ?? 0) >= 7 ? "bg-rose-100/80 text-rose-900" : (t.relevance_score ?? 0) >= 4 ? "bg-amber-100/80 text-amber-900" : "bg-stone-200/70 text-stone-700"}`}>
-                          {t.relevance_score ?? "—"}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3">
-                        <Link href={`/trademarks/${t.id}`} className="font-semibold text-stone-900 hover:text-stone-600">{t.markenname}</Link>
-                        <div className="text-[11px] text-stone-500">{t.aktenzeichen}</div>
-                      </td>
-                      <td className="px-5 py-3 hidden md:table-cell">
-                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-stone-700 ring-1 ring-white capitalize">{t.match_type}</span>
-                      </td>
-                      <td className="px-5 py-3 hidden md:table-cell">
-                        {t.prioritaet
-                          ? <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize ${t.prioritaet === "critical" ? "bg-rose-100 text-rose-900" : t.prioritaet === "high" ? "bg-amber-100 text-amber-900" : "bg-stone-100 text-stone-600"}`}>{t.prioritaet}</span>
-                          : <span className="text-stone-400">—</span>}
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className={`text-xs ${days !== null && days <= 7 ? "font-bold text-rose-700" : days !== null && days <= 30 ? "font-semibold text-amber-700" : "text-stone-500"}`}>
-                          {days !== null ? (days < 0 ? "Abgelaufen" : `${days}d`) : "—"}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
+                {runs.length === 0 && (
+                  <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">Noch kein Scan gelaufen.</td></tr>
+                )}
+                {runs.map((r) => (
+                  <tr key={r.id} className="border-t border-white/50">
+                    <td className="px-5 py-3 text-[11px] text-slate-700">{new Date(r.started_at).toLocaleString("de-DE")}</td>
+                    <td className="px-5 py-3 text-[11px] capitalize hidden md:table-cell">{r.region ?? "—"}</td>
+                    <td className="px-5 py-3 text-[11px] hidden md:table-cell">{r.raw_results}</td>
+                    <td className="px-5 py-3 text-[11px] font-semibold text-emerald-700">{r.new_hits}</td>
+                    <td className="px-5 py-3">
+                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${r.status === "success" ? "bg-emerald-100/80 text-emerald-800" : r.status === "partial" ? "bg-amber-100/80 text-amber-800" : r.status === "failed" ? "bg-red-100/80 text-red-800" : "bg-slate-100/80 text-slate-700"}`}>
+                        {r.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </section>
       )}
-
-      {/* Scan-Historie */}
-      <section className="glass mt-5 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-white/60 px-5 py-3">
-          <h2 className="text-sm font-semibold text-slate-900">Scan-Historie</h2>
-          <Sparkline
-            data={runs.slice().reverse().map((r) => r.new_hits)}
-            color="#78716c"
-            width={140}
-            height={32}
-          />
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
-              <tr>
-                <th className="px-5 py-3 font-semibold">Start</th>
-                <th className="px-5 py-3 font-semibold hidden md:table-cell">Region</th>
-                <th className="px-5 py-3 font-semibold hidden md:table-cell">Roh</th>
-                <th className="px-5 py-3 font-semibold">Neu</th>
-                <th className="px-5 py-3 font-semibold">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">Noch kein Scan gelaufen.</td></tr>
-              )}
-              {runs.map((r) => (
-                <tr key={r.id} className="border-t border-white/50">
-                  <td className="px-5 py-3 text-[11px] text-slate-700">{new Date(r.started_at).toLocaleString("de-DE")}</td>
-                  <td className="px-5 py-3 text-[11px] capitalize hidden md:table-cell">{r.region ?? "—"}</td>
-                  <td className="px-5 py-3 text-[11px] hidden md:table-cell">{r.raw_results}</td>
-                  <td className="px-5 py-3 text-[11px] font-semibold text-emerald-700">{r.new_hits}</td>
-                  <td className="px-5 py-3">
-                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${r.status === "success" ? "bg-emerald-100/80 text-emerald-800" : r.status === "partial" ? "bg-amber-100/80 text-amber-800" : r.status === "failed" ? "bg-red-100/80 text-red-800" : "bg-slate-100/80 text-slate-700"}`}>
-                      {r.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </AppShell>
   );
 }
