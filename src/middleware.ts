@@ -15,53 +15,50 @@ function isPublic(pathname: string) {
 }
 
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  // getUser() requires a Supabase network round-trip on every request — too slow for Edge.
+  // getSession() reads the session from the cookie (no network) and is safe for routing decisions.
+  // Actual server components and API routes still use getUser() for real authorization.
+  try {
+    let response = NextResponse.next({ request });
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => request.cookies.getAll(),
-        setAll: (toSet: { name: string; value: string; options?: Record<string, unknown> }[]) => {
-          toSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          response = NextResponse.next({ request });
-          toSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options as Parameters<typeof response.cookies.set>[2]),
-          );
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll: () => request.cookies.getAll(),
+          setAll: (toSet: { name: string; value: string; options?: Record<string, unknown> }[]) => {
+            toSet.forEach(({ name, value }) => request.cookies.set(name, value));
+            response = NextResponse.next({ request });
+            toSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, options as Parameters<typeof response.cookies.set>[2]),
+            );
+          },
         },
       },
-    },
-  );
+    );
 
-  const { data: { user } } = await supabase.auth.getUser();
-  const { pathname } = request.nextUrl;
+    // getSession() is local — reads from cookie, no network call.
+    const { data: { session } } = await supabase.auth.getSession();
+    const { pathname } = request.nextUrl;
 
-  // Unauthenticated → send to login (except public paths)
-  if (!user) {
-    if (isPublic(pathname)) return response;
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  // Authenticated user on login/register → send to dashboard
-  if (pathname.startsWith("/login") || pathname.startsWith("/register")) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
-  // Check approval for all non-public paths (skip /pending itself to avoid loop)
-  if (!isPublic(pathname) && pathname !== "/pending") {
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("approved")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (profile !== null && !profile.approved) {
-      return NextResponse.redirect(new URL("/pending", request.url));
+    // Unauthenticated → redirect to login (except public paths)
+    if (!session) {
+      if (isPublic(pathname)) return response;
+      return NextResponse.redirect(new URL("/login", request.url));
     }
-  }
 
-  return response;
+    // Authenticated on login/register → redirect to dashboard
+    if (pathname.startsWith("/login") || pathname.startsWith("/register")) {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+
+    return response;
+  } catch {
+    // If anything unexpected throws (e.g. missing env vars during cold start),
+    // allow the request through — page-level auth will catch it.
+    return NextResponse.next({ request });
+  }
 }
 
 export const config = {

@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-export default function ResetPasswordClient() {
+export default function ResetPasswordPage() {
   const router = useRouter();
   const supabase = getSupabaseBrowserClient();
   const [newPw, setNewPw] = useState("");
@@ -14,6 +14,7 @@ export default function ResetPasswordClient() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    // Supabase sets the session from the URL hash automatically
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") setReady(true);
     });

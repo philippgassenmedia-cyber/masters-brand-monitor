@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState, useCallback, useTransition } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { NIZZA_BESCHREIBUNG, IMMOBILIEN_KLASSEN } from "@/lib/dpma/nizza-klassen";
 import { useScan } from "@/components/scan-context";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -210,7 +210,36 @@ interface NewHit {
   markenname: string;
   score: number | null;
   website?: string | null;
+  quelle?: string;
 }
+
+interface AgentLogLine {
+  ts: number;
+  tone: "info" | "ok" | "warn" | "err";
+  text: string;
+}
+
+type AgentPhase = "idle" | "pending" | "running" | "done" | "error";
+
+interface AgentScanState {
+  phase: AgentPhase;
+  jobId: string | null;
+  sinceTs: string | null;
+  hits: NewHit[];
+  log: AgentLogLine[];
+  jobStatus: string | null;
+  startedAt: number | null;
+}
+
+const AGENT_IDLE: AgentScanState = {
+  phase: "idle",
+  jobId: null,
+  sinceTs: null,
+  hits: [],
+  log: [],
+  jobStatus: null,
+  startedAt: null,
+};
 
 function formatDuration(ms: number): string {
   const sec = Math.round(ms / 1000);
@@ -228,22 +257,27 @@ export function DpmaScanClient() {
 }
 
 function DpmaScanClientDesktop() {
-  const { state, startScan, stopScan } = useScan();
-  const [pending, startTransition] = useTransition();
+  // Gemini stream context — used only for EUIPO scans
+  const { state: geminiState, startScan, stopScan: stopGemini } = useScan();
 
-  // Local UI state only — filter inputs + UI toggles
+  // Local UI state
   const [source, setSource] = useState<ScanSource>("dpma");
   const [nurDE, setNurDE] = useState(true);
   const [nurInKraft, setNurInKraft] = useState(true);
   const [selectedKlassen, setSelectedKlassen] = useState<Set<number>>(DEFAULT_KLASSEN);
   const [zeitraumMonate, setZeitraumMonate] = useState(0);
   const [klassenOpen, setKlassenOpen] = useState(false);
-  const [maxVarianten, setMaxVarianten] = useState(1);
   const [now, setNow] = useState(Date.now());
   const [showSuccess, setShowSuccess] = useState(false);
 
+  // Agent-based scan state (for DPMA)
+  const [agentScan, setAgentScan] = useState<AgentScanState>(AGENT_IDLE);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const seenAzRef = useRef<Set<string>>(new Set());
+  const prevAgentPhaseRef = useRef<AgentPhase>("idle");
+
   const logEndRef = useRef<HTMLDivElement>(null);
-  const prevPhaseRef = useRef<string>(state.phase);
+  const prevGeminiPhaseRef = useRef<string>(geminiState.phase);
 
   const toggleKlasse = useCallback((k: number) => {
     setSelectedKlassen((prev) => {
@@ -256,29 +290,176 @@ function DpmaScanClientDesktop() {
 
   const klassenString = [...selectedKlassen].sort((a, b) => a - b).join(" ");
 
-  // Timer tick
+  // Timer tick while any scan is active
+  const isAnyScanActive = agentScan.phase !== "idle" || geminiState.running;
   useEffect(() => {
-    if (!state.running) return;
+    if (!isAnyScanActive) return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [state.running]);
+  }, [isAnyScanActive]);
 
   // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [state.log]);
+  }, [agentScan.log, geminiState.log]);
 
-  // Success overlay when scan finishes while on this page
+  // Success overlay — agent scan done
   useEffect(() => {
-    const isDpmaSource = state.source === "dpma" || state.source === "euipo";
-    if (!isDpmaSource) return;
-    if (prevPhaseRef.current !== "done" && state.phase === "done") {
+    if (prevAgentPhaseRef.current !== "done" && agentScan.phase === "done") {
       setShowSuccess(true);
       const t = setTimeout(() => setShowSuccess(false), 3000);
       return () => clearTimeout(t);
     }
-    prevPhaseRef.current = state.phase;
-  }, [state.phase, state.source]);
+    prevAgentPhaseRef.current = agentScan.phase;
+  }, [agentScan.phase]);
+
+  // Success overlay — gemini scan done
+  useEffect(() => {
+    const isEuipoSource = geminiState.source === "euipo";
+    if (!isEuipoSource) return;
+    if (prevGeminiPhaseRef.current !== "done" && geminiState.phase === "done") {
+      setShowSuccess(true);
+      const t = setTimeout(() => setShowSuccess(false), 3000);
+      return () => clearTimeout(t);
+    }
+    prevGeminiPhaseRef.current = geminiState.phase;
+  }, [geminiState.phase, geminiState.source]);
+
+  // Poll loop for agent-based DPMA scans
+  const stopPoll = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  const runPoll = useCallback(async (sinceTs: string, jobId: string) => {
+    try {
+      // Check job status
+      const scansRes = await fetch("/api/scheduled-scans");
+      if (scansRes.ok) {
+        const { scans } = await scansRes.json() as { scans: Array<{ id: string; status: string; result?: Record<string, unknown> }> };
+        const job = scans.find((s) => s.id === jobId);
+        if (job) {
+          setAgentScan((prev) => {
+            const log = [...prev.log];
+            if (job.status === "running" && prev.jobStatus !== "running") {
+              log.push({ ts: Date.now(), tone: "ok", text: "Agent hat Auftrag aufgenommen — durchsucht DPMA-Register…" });
+            }
+            if ((job.status === "completed" || job.status === "partial") && prev.jobStatus !== job.status) {
+              const r = job.result as { new?: number; updated?: number; found?: number; errors?: number } | undefined;
+              log.push({ ts: Date.now(), tone: "ok", text: `Scan abgeschlossen: ${r?.new ?? 0} neu, ${r?.updated ?? 0} bekannt, ${r?.found ?? 0} gesamt` });
+            }
+            return { ...prev, jobStatus: job.status, log };
+          });
+
+          if (job.status === "completed" || job.status === "partial") {
+            stopPoll();
+            setAgentScan((prev) => ({ ...prev, phase: "done" }));
+            return;
+          }
+        }
+      }
+
+      // Fetch new trademarks since job was created
+      const tmRes = await fetch(`/api/trademarks/recent?since=${encodeURIComponent(sinceTs)}`);
+      if (tmRes.ok) {
+        const { trademarks } = await tmRes.json() as {
+          trademarks: Array<{ id: string; aktenzeichen: string; markenname: string; relevance_score: number | null; resolved_website: string | null; quelle: string }>
+        };
+        const newOnes = trademarks.filter((t) => !seenAzRef.current.has(t.aktenzeichen));
+        if (newOnes.length > 0) {
+          newOnes.forEach((t) => seenAzRef.current.add(t.aktenzeichen));
+          setAgentScan((prev) => {
+            const newLog = newOnes.map((t) => ({
+              ts: Date.now(),
+              tone: "ok" as const,
+              text: `Neu: ${t.markenname} (${t.aktenzeichen})${t.resolved_website ? ` → ${tryHostname(t.resolved_website)}` : ""}`,
+            }));
+            return {
+              ...prev,
+              phase: prev.phase === "pending" ? "running" : prev.phase,
+              hits: [
+                ...newOnes.map((t) => ({
+                  id: t.id,
+                  aktenzeichen: t.aktenzeichen,
+                  markenname: t.markenname,
+                  score: t.relevance_score,
+                  website: t.resolved_website,
+                  quelle: t.quelle,
+                })),
+                ...prev.hits,
+              ].slice(0, 200),
+              log: [...prev.log, ...newLog].slice(-300),
+            };
+          });
+        }
+      }
+    } catch {
+      // Network hiccup — wait for next tick
+    }
+  }, [stopPoll]);
+
+  const stopAgentScan = useCallback(() => {
+    stopPoll();
+    setAgentScan((prev) => ({ ...prev, phase: "idle" }));
+    seenAzRef.current.clear();
+  }, [stopPoll]);
+
+  const startAgentScan = useCallback(async (klassen: string) => {
+    seenAzRef.current.clear();
+    const sinceTs = new Date().toISOString();
+
+    setAgentScan({
+      phase: "pending",
+      jobId: null,
+      sinceTs,
+      hits: [],
+      log: [{ ts: Date.now(), tone: "info", text: "Erstelle Scan-Auftrag…" }],
+      jobStatus: null,
+      startedAt: Date.now(),
+    });
+
+    try {
+      const res = await fetch("/api/scheduled-scans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scheduled_at: sinceTs,
+          scan_type: "dpma",
+          notes: `UI-Auftrag · Klassen: ${klassen}`,
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      // Find the job we just created
+      const listRes = await fetch("/api/scheduled-scans");
+      const { scans } = await listRes.json() as { scans: Array<{ id: string; status: string; scheduled_at: string }> };
+      const job = scans.find((s) => s.status === "pending" && s.scheduled_at >= sinceTs.slice(0, 16));
+      const jobId = job?.id ?? null;
+
+      setAgentScan((prev) => ({
+        ...prev,
+        jobId,
+        log: [
+          ...prev.log,
+          { ts: Date.now(), tone: "ok", text: `Auftrag erstellt${jobId ? ` (${jobId.slice(0, 8)}…)` : ""}. Warte auf lokalen Agenten…` },
+          { ts: Date.now(), tone: "info", text: "Tipp: Agent herunterladen und starten, falls noch nicht aktiv." },
+        ],
+      }));
+
+      if (jobId) {
+        stopPoll();
+        pollRef.current = setInterval(() => runPoll(sinceTs, jobId), 5000);
+      } else {
+        // No jobId found — still poll for trademarks
+        pollRef.current = setInterval(() => runPoll(sinceTs, ""), 5000);
+      }
+    } catch (e) {
+      setAgentScan((prev) => ({
+        ...prev,
+        phase: "error",
+        log: [...prev.log, { ts: Date.now(), tone: "err", text: `Fehler: ${(e as Error).message}` }],
+      }));
+    }
+  }, [stopPoll, runPoll]);
 
   const start = () => {
     const body: Record<string, unknown> = {
@@ -286,47 +467,92 @@ function DpmaScanClientDesktop() {
       nurDE,
       nurInKraft,
       zeitraumMonate: zeitraumMonate || undefined,
-      maxVarianten,
     };
 
-    if (source === "dpma") {
-      startScan(["/api/dpma/search/stream"], body, "dpma");
-    } else if (source === "euipo") {
+    if (source === "euipo") {
+      startScan(["/api/euipo/search/stream"], body, "euipo");
+    } else if (source === "both") {
+      startAgentScan(klassenString);
       startScan(["/api/euipo/search/stream"], body, "euipo");
     } else {
-      startScan(
-        ["/api/dpma/search/stream", "/api/euipo/search/stream"],
-        body,
-        "dpma",
-      );
+      startAgentScan(klassenString);
     }
   };
 
-  // Derived state — only relevant when this source type is active
-  const isDpmaScan = state.source === "dpma" || state.source === "euipo";
-  const running = state.running && isDpmaScan;
-  const phase = isDpmaScan ? state.phase : "idle";
-  const log = isDpmaScan ? state.log : [];
-  const progress = isDpmaScan ? state.progress : { current: 0, total: 0 };
-  const startedAt = isDpmaScan ? state.startedAt : null;
-  const kpis = {
-    found: isDpmaScan ? state.progress.total : 0,
-    newHits: isDpmaScan ? state.newHits : 0,
-    updated: isDpmaScan ? state.updatedCount : 0,
-    errors: isDpmaScan ? state.errors : 0,
+  const stop = () => {
+    if (source === "dpma") {
+      stopAgentScan();
+    } else if (source === "euipo") {
+      stopGemini();
+    } else {
+      stopAgentScan();
+      stopGemini();
+    }
   };
-  const newHits: NewHit[] = isDpmaScan
-    ? state.rawHits.map((h: Record<string, unknown>) => ({
+
+  // Cleanup poll on unmount
+  useEffect(() => () => stopPoll(), [stopPoll]);
+
+  // Determine display state
+  const isDpmaActive = agentScan.phase !== "idle";
+  const isEuipoActive = geminiState.source === "euipo" && (geminiState.running || geminiState.phase === "done");
+
+  const running = (source === "dpma" && (agentScan.phase === "pending" || agentScan.phase === "running"))
+    || (source === "euipo" && geminiState.running)
+    || (source === "both" && (agentScan.phase === "pending" || agentScan.phase === "running" || geminiState.running));
+
+  const activeLog: AgentLogLine[] = source === "euipo"
+    ? geminiState.log.map((l) => ({ ts: l.ts, tone: l.tone as AgentLogLine["tone"], text: l.text }))
+    : agentScan.log;
+
+  const newHits: NewHit[] = source === "euipo"
+    ? geminiState.rawHits.map((h: Record<string, unknown>) => ({
         id: String(h.id ?? ""),
         aktenzeichen: String(h.aktenzeichen ?? ""),
         markenname: String(h.markenname ?? ""),
         score: (h.score as number | null) ?? null,
         website: (h.website as string | null) ?? null,
+        quelle: "euipo",
       }))
-    : [];
+    : agentScan.hits;
 
+  const startedAt = source === "euipo" ? geminiState.startedAt : agentScan.startedAt;
   const elapsed = startedAt ? now - startedAt : 0;
-  const pct = progress.total > 0 ? progress.current / progress.total : 0;
+  const isFiltersHidden = (isDpmaActive || isEuipoActive) && (agentScan.phase !== "idle" || geminiState.phase !== "idle");
+
+  // Status text
+  let statusTitle = "Bereit";
+  let statusSub = source === "dpma"
+    ? "Sucht direkt im DPMA-Register — lokaler Agent erforderlich"
+    : source === "euipo"
+    ? "Suche via Gemini Grounding (Google-Index)"
+    : "DPMA via lokalem Agent · EUIPO via Gemini Grounding";
+
+  if (agentScan.phase === "pending") {
+    statusTitle = "Warte auf lokalen Agenten…";
+    statusSub = "Agent muss auf deinem Rechner laufen (alle 30s Polling)";
+  } else if (agentScan.phase === "running") {
+    statusTitle = "Agent durchsucht DPMA-Register";
+    statusSub = `Verstrichen: ${formatDuration(elapsed)}`;
+  } else if (source === "euipo" && geminiState.running) {
+    statusTitle = "Durchsuche EUIPO via Gemini…";
+    statusSub = `Verstrichen: ${formatDuration(elapsed)}`;
+  } else if (agentScan.phase === "done" || (source === "euipo" && geminiState.phase === "done")) {
+    statusTitle = "Suche abgeschlossen";
+    statusSub = `Dauer: ${formatDuration(elapsed)}`;
+  } else if (agentScan.phase === "error") {
+    statusTitle = "Fehler beim Starten";
+    statusSub = "Bitte erneut versuchen";
+  }
+
+  const dpmaHits = agentScan.hits.length;
+  const euipoHits = geminiState.newHits;
+  const totalNew = source === "dpma" ? dpmaHits : source === "euipo" ? euipoHits : dpmaHits + euipoHits;
+
+  const euipoPct = geminiState.progress.total > 0 ? geminiState.progress.current / geminiState.progress.total : 0;
+
+  const isAgentIdle = agentScan.phase === "idle";
+  const isDone = agentScan.phase === "done" || agentScan.phase === "error" || (source === "euipo" && geminiState.phase === "done" && !geminiState.running);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -337,8 +563,8 @@ function DpmaScanClientDesktop() {
         </Link>
       </header>
 
-      {/* Filter — hide while a register scan is active */}
-      {!isDpmaScan || phase === "idle" ? (
+      {/* Filter — hide while a scan is active */}
+      {!isFiltersHidden && (
         <section className="glass mb-3 p-5">
           <h2 className="mb-3 text-sm font-semibold text-stone-900">Suchfilter</h2>
 
@@ -365,6 +591,13 @@ function DpmaScanClientDesktop() {
                 </button>
               ))}
             </div>
+            <span className="ml-3 text-[11px] text-stone-400">
+              {source === "dpma"
+                ? "Echter Register-Zugriff via lokalem Playwright-Agenten"
+                : source === "euipo"
+                ? "Google-Index via Gemini Grounding"
+                : "Agent für DPMA · Grounding für EUIPO"}
+            </span>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[1fr_auto]">
@@ -477,93 +710,86 @@ function DpmaScanClientDesktop() {
             </div>
           </div>
         </section>
-      ) : null}
+      )}
 
-      {/* Agent-Download-Callout — nur im Idle-Zustand */}
-      {(!isDpmaScan || phase === "idle") && <AgentCallout />}
+      {/* Agent-Download-Callout — nur im Idle-Zustand und bei DPMA-Quelle */}
+      {!isFiltersHidden && source !== "euipo" && <AgentCallout />}
 
       {/* Start / Status */}
       <section className="glass mb-3 px-5 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            {running ? (
+            {agentScan.phase === "pending" ? (
+              <span className="relative flex h-3 w-3">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+                <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-500" />
+              </span>
+            ) : running ? (
               <span className="relative flex h-3 w-3">
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex h-3 w-3 rounded-full bg-emerald-500" />
               </span>
-            ) : phase === "done" ? (
-              <span className="h-3 w-3 rounded-full bg-emerald-500" />
+            ) : isDone ? (
+              <span className={`h-3 w-3 rounded-full ${agentScan.phase === "error" ? "bg-rose-500" : "bg-emerald-500"}`} />
             ) : (
               <span className="h-3 w-3 rounded-full bg-stone-400" />
             )}
             <div>
-              <div className="text-sm font-semibold text-stone-900">
-                {phase === "idle" ? "Bereit" : phase === "browser" ? "Register werden durchsucht" : phase === "analyze" ? "Treffer werden analysiert" : phase === "done" ? "Suche abgeschlossen" : "Verbinde…"}
-              </div>
-              <div className="text-[11px] text-stone-500">
-                {running ? `Verstrichen: ${formatDuration(elapsed)}` : phase === "done" ? `Dauer: ${formatDuration(elapsed)}` : "Suche via Gemini Grounding — kein lokaler Agent nötig"}
-              </div>
+              <div className="text-sm font-semibold text-stone-900">{statusTitle}</div>
+              <div className="text-[11px] text-stone-500">{statusSub}</div>
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {isDpmaScan && progress.total > 0 && (
+            {totalNew > 0 && (
               <div className="flex items-center gap-3 text-right">
-                <MiniStat label="Gefunden" value={kpis.found} />
-                <MiniStat label="Neu" value={kpis.newHits} tone="emerald" />
-                <MiniStat label="Bekannt" value={kpis.updated} />
-                {kpis.errors > 0 && <MiniStat label="Fehler" value={kpis.errors} tone="red" />}
+                <MiniStat label="Neu" value={totalNew} tone="emerald" />
+                {geminiState.updatedCount > 0 && <MiniStat label="Bekannt" value={geminiState.updatedCount} />}
+                {geminiState.errors > 0 && <MiniStat label="Fehler" value={geminiState.errors} tone="red" />}
               </div>
             )}
-            {!running && phase === "idle" && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-stone-500">Varianten/Stamm:</span>
-                <div className="inline-flex rounded-full border border-stone-200 bg-white/60 p-0.5">
-                  {([1, 3, 6] as const).map((v) => (
-                    <button
-                      key={v}
-                      onClick={() => setMaxVarianten(v)}
-                      title={v === 1 ? "Test — ~$0,04/Stamm" : v === 3 ? "Mittel — ~$0,18/Stamm" : "Voll — ~$0,40/Stamm"}
-                      className={`rounded-full px-3 py-1 text-[11px] font-semibold transition ${
-                        maxVarianten === v
-                          ? "bg-stone-900 text-white"
-                          : "text-stone-500 hover:text-stone-800"
-                      }`}
-                    >
-                      {v === 1 ? "1 ·Test" : v === 3 ? "3 · Mid" : "6 · Voll"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {!running ? (
+            {isAgentIdle && !running ? (
               <button
                 onClick={start}
                 className="h-10 rounded-full bg-stone-900 px-6 text-xs font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] hover:bg-stone-800"
               >
                 {source === "dpma" ? "DPMA durchsuchen" : source === "euipo" ? "EUIPO durchsuchen" : "DPMA + EUIPO durchsuchen"}
               </button>
-            ) : (
+            ) : running || agentScan.phase === "pending" ? (
               <button
-                onClick={stopScan}
+                onClick={stop}
                 className="h-10 rounded-full border border-rose-200 bg-rose-50/80 px-6 text-xs font-semibold text-rose-800 hover:bg-rose-100"
               >
                 Abbrechen
               </button>
-            )}
+            ) : isDone ? (
+              <button
+                onClick={() => { setAgentScan(AGENT_IDLE); seenAzRef.current.clear(); }}
+                className="h-10 rounded-full border border-stone-200 bg-white/70 px-6 text-xs font-semibold text-stone-700 hover:bg-white"
+              >
+                Neu starten
+              </button>
+            ) : null}
           </div>
         </div>
-        {isDpmaScan && (running || phase === "done") && progress.total > 0 && (
+
+        {/* Progress bar — EUIPO Gemini only */}
+        {isEuipoActive && geminiState.progress.total > 0 && (
           <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-stone-200/70">
             <div
-              className={`h-full rounded-full transition-all duration-500 ${
-                phase === "done" ? "bg-emerald-500" : "bg-gradient-to-r from-stone-700 to-stone-900"
-              }`}
-              style={{ width: `${Math.max(2, pct * 100)}%` }}
+              className={`h-full rounded-full transition-all duration-500 ${geminiState.phase === "done" ? "bg-emerald-500" : "bg-gradient-to-r from-stone-700 to-stone-900"}`}
+              style={{ width: `${Math.max(2, euipoPct * 100)}%` }}
             />
           </div>
         )}
-      </section>
 
+        {/* Pending agent hint */}
+        {agentScan.phase === "pending" && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-900">
+            <strong>Agent noch nicht aktiv?</strong>{" "}
+            Lade den Agenten oben herunter und starte ihn auf deinem Rechner. Er prüft automatisch alle 30 Sekunden auf neue Aufträge.
+          </div>
+        )}
+      </section>
 
       {/* Success Overlay */}
       {showSuccess && (
@@ -577,7 +803,7 @@ function DpmaScanClientDesktop() {
             </div>
             <div className="text-lg font-semibold text-stone-900">Register-Suche abgeschlossen</div>
             <div className="text-sm text-stone-600">
-              {kpis.newHits} neue Marken · {kpis.updated} bekannt · {formatDuration(elapsed)}
+              {totalNew} neue Marken · {formatDuration(elapsed)}
             </div>
             <Link href="/trademarks" className="mt-2 rounded-full bg-stone-900 px-5 py-1.5 text-xs font-semibold text-white hover:bg-stone-800">
               Ergebnisse ansehen
@@ -586,14 +812,14 @@ function DpmaScanClientDesktop() {
         </div>
       )}
 
-      {/* Log + Results */}
-      {isDpmaScan && (running || log.length > 0) && (
+      {/* Log + Results — shown while active or after done */}
+      {(isDpmaActive || isEuipoActive) && activeLog.length > 0 && (
         <section className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           {/* Log */}
           <div className="glass flex min-h-0 flex-col p-4">
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-stone-600">Live-Log</h2>
             <div className="scroll-area min-h-0 flex-1 overflow-y-auto rounded-xl bg-stone-950 p-3 font-mono text-[11px] text-stone-200">
-              {log.map((l, i) => (
+              {activeLog.map((l, i) => (
                 <div key={i} className={l.tone === "err" ? "text-rose-300" : l.tone === "warn" ? "text-amber-300" : l.tone === "ok" ? "text-emerald-300" : "text-stone-200"}>
                   <span className="mr-2 text-stone-500">{new Date(l.ts).toLocaleTimeString("de-DE")}</span>
                   {l.text}
@@ -609,54 +835,71 @@ function DpmaScanClientDesktop() {
               Neue Marken · {newHits.length}
             </h2>
             <div className="scroll-area min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-              {newHits.length === 0 && !running && (
+              {newHits.length === 0 && (
                 <div className="flex h-full items-center justify-center text-xs text-stone-500">
-                  Noch keine neuen Marken gefunden.
+                  {agentScan.phase === "pending"
+                    ? "Warte auf Agenten…"
+                    : "Noch keine neuen Marken gefunden."}
                 </div>
               )}
-              {newHits.map((h) => (
-                <a
-                  key={h.aktenzeichen}
-                  href={h.id ? `/trademarks/${h.id}` : `https://register.dpma.de/DPMAregister/marke/register/${h.aktenzeichen}/DE`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-3 rounded-xl border border-white/70 bg-white/70 px-3 py-2.5 transition hover:bg-white/90"
-                >
-                  <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                    (h.score ?? 0) >= 7 ? "bg-rose-100 text-rose-900" : (h.score ?? 0) >= 4 ? "bg-amber-100 text-amber-900" : "bg-stone-200/70 text-stone-700"
-                  }`}>
-                    {h.score ?? "—"}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-semibold text-stone-900">{h.markenname}</div>
-                    <div className="flex items-center gap-2 text-[11px] text-stone-500">
-                      <span>{h.aktenzeichen}</span>
-                      {h.website && (
-                        <a
-                          href={h.website}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="truncate text-stone-600 hover:text-stone-900 hover:underline"
-                        >
-                          {new URL(h.website).hostname}
-                        </a>
-                      )}
+              {newHits.map((h) => {
+                const isEuipo = h.quelle === "euipo";
+                const registerUrl = isEuipo
+                  ? `https://euipo.europa.eu/eSearch/#details/trademarks/${h.aktenzeichen}`
+                  : `https://register.dpma.de/DPMAregister/marke/register/${h.aktenzeichen}/DE`;
+                return (
+                  <a
+                    key={h.aktenzeichen}
+                    href={h.id ? `/trademarks/${h.id}` : registerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-3 rounded-xl border border-white/70 bg-white/70 px-3 py-2.5 transition hover:bg-white/90"
+                  >
+                    <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                      (h.score ?? 0) >= 7 ? "bg-rose-100 text-rose-900" : (h.score ?? 0) >= 4 ? "bg-amber-100 text-amber-900" : "bg-stone-200/70 text-stone-700"
+                    }`}>
+                      {h.score ?? "—"}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-sm font-semibold text-stone-900">{h.markenname}</span>
+                        {isEuipo && (
+                          <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-800">EU</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-stone-500">
+                        <span>{h.aktenzeichen}</span>
+                        {h.website && (
+                          <a
+                            href={h.website}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="truncate text-stone-600 hover:text-stone-900 hover:underline"
+                          >
+                            {tryHostname(h.website)}
+                          </a>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-stone-400">
-                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                    <polyline points="15 3 21 3 21 9" />
-                    <line x1="10" y1="14" x2="21" y2="3" />
-                  </svg>
-                </a>
-              ))}
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-stone-400">
+                      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                      <polyline points="15 3 21 3 21 9" />
+                      <line x1="10" y1="14" x2="21" y2="3" />
+                    </svg>
+                  </a>
+                );
+              })}
             </div>
           </div>
         </section>
       )}
     </div>
   );
+}
+
+function tryHostname(url: string): string {
+  try { return new URL(url).hostname; } catch { return url; }
 }
 
 function MiniStat({ label, value, tone = "slate" }: { label: string; value: number; tone?: "slate" | "emerald" | "red" }) {

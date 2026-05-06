@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getSupabaseBrowserClient } from "@/lib/supabase/client";
 
-export default function AccountClient() {
+export default function AccountPage() {
   const router = useRouter();
   const supabase = getSupabaseBrowserClient();
 
@@ -23,6 +23,7 @@ export default function AccountClient() {
     if (newPw !== confirmPw) { setPwError("Passwörter stimmen nicht überein."); return; }
     if (newPw.length < 8) { setPwError("Mindestens 8 Zeichen erforderlich."); return; }
     setPwPending(true);
+    // Re-authenticate first to verify current password
     const { data: { user } } = await supabase.auth.getUser();
     if (!user?.email) { setPwError("Nicht eingeloggt."); setPwPending(false); return; }
     const { error: signInErr } = await supabase.auth.signInWithPassword({
