@@ -1,5 +1,5 @@
 import { cleanCompany, extractCompanyFromText, normalizeAddressKey } from "./profile-cleanup";
-import { isOwnerCompany } from "./brand";
+import { isOwnerCompany, isAcademicHit } from "./brand";
 import { isAggregatorDomain } from "./resolve-company";
 import type { Hit } from "./types";
 
@@ -165,8 +165,9 @@ function scoreHit(h: Hit): number {
 }
 
 export function hitBelongsToOwner(
-  h: Pick<Hit, "company_name" | "ai_reasoning" | "snippet" | "title">,
+  h: Pick<Hit, "company_name" | "ai_reasoning" | "snippet" | "title" | "domain">,
 ): boolean {
+  if (isAcademicHit({ domain: h.domain, title: h.title, snippet: h.snippet })) return true;
   const candidates = [
     cleanCompany(h.company_name),
     extractCompanyFromText(h.ai_reasoning),
@@ -187,7 +188,8 @@ export function groupHits(hits: Hit[]): HitGroup[] {
     bucket.set(k, arr);
   }
 
-  const groups: HitGroup[] = [];
+  // Build initial groups
+  const groupMap = new Map<string, HitGroup>();
   for (const [key, arr] of bucket) {
     const sorted = [...arr].sort((a, b) => scoreHit(b) - scoreHit(a));
     const primary = sorted[0];
@@ -197,14 +199,59 @@ export function groupHits(hits: Hit[]): HitGroup[] {
         h.ai_score !== null && (acc === null || h.ai_score > acc) ? h.ai_score : acc,
       null,
     );
-    groups.push({ key, primary, related, totalCount: arr.length, maxScore });
+    groupMap.set(key, { key, primary, related, totalCount: arr.length, maxScore });
   }
 
-  groups.sort((a, b) => {
+  // Post-merge: absorb aggregator (ca:) groups into matching domain (d:) groups.
+  // This prevents the same company appearing twice — once as its own website and
+  // once as an aggregator listing. Only merges when ≥2 normalized name words match
+  // and the city is compatible (same city, or one side has no city info).
+  const companyToDomainKey = new Map<string, string>();
+  for (const [key, g] of groupMap) {
+    if (!key.startsWith("d:")) continue;
+    const name = normalizeCompany(resolveCompany(g.primary));
+    if (name && name.trim().split(/\s+/).length >= 2) {
+      companyToDomainKey.set(name, key);
+    }
+  }
+
+  const finalGroups: HitGroup[] = [];
+  for (const [key, g] of groupMap) {
+    if (!key.startsWith("ca:")) {
+      finalGroups.push(g);
+      continue;
+    }
+    const name = normalizeCompany(resolveCompany(g.primary));
+    const domainKey = name ? companyToDomainKey.get(name) : undefined;
+    if (domainKey) {
+      // City compatibility: extract city from the ca: key (e.g. "ca:master|c:frankfurt")
+      // and compare with the d: group's own city — skip merge if cities are both known but differ.
+      const caCity = key.includes("|") ? key.split("|")[1] : null;
+      const dg = groupMap.get(domainKey)!;
+      if (caCity) {
+        const dgAddr = dg.primary.address ?? dg.primary.subject_company_address;
+        const dgLoc = extractLocationKey(dgAddr) ?? extractCityFromName(resolveCompany(dg.primary));
+        if (dgLoc && dgLoc !== caCity) {
+          finalGroups.push(g);
+          continue;
+        }
+      }
+      // Merge aggregator group into domain group as related hits
+      dg.related = [...dg.related, g.primary, ...g.related];
+      dg.totalCount += g.totalCount;
+      if (g.maxScore !== null && (dg.maxScore === null || g.maxScore > dg.maxScore)) {
+        dg.maxScore = g.maxScore;
+      }
+    } else {
+      finalGroups.push(g);
+    }
+  }
+
+  finalGroups.sort((a, b) => {
     const sa = a.maxScore ?? -1;
     const sb = b.maxScore ?? -1;
     if (sb !== sa) return sb - sa;
     return +new Date(b.primary.last_seen_at) - +new Date(a.primary.last_seen_at);
   });
-  return groups;
+  return finalGroups;
 }

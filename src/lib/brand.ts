@@ -40,6 +40,47 @@ export function isOwnerCompany(company: string | null | undefined): boolean {
   return names.includes(target);
 }
 
+// ── Akademische Treffer ──────────────────────────────────────────────────────
+
+const ACADEMIC_DOMAIN_RE =
+  /\b(uni|hochschule|fh|hs|th|studium|campus|faculty|college)\b|\.(edu|ac\.at|ac\.uk|ac\.ch|ac\.nz)$/;
+
+const ACADEMIC_PORTALS = new Set([
+  "studycheck.de",
+  "studis-online.de",
+  "hochschulkompass.de",
+  "daad.de",
+  "studieren.de",
+  "bachelor-master-studium.de",
+  "mastersportal.eu",
+  "mastersportal.com",
+  "study.eu",
+  "studying-in-germany.org",
+  "studienwahl.de",
+  "academics.de",
+  "findmasters.com",
+  "hotcourses.de",
+  "graduateland.com",
+  "mastersavenue.com",
+]);
+
+const ACADEMIC_CONTENT_RE =
+  /masterstudi(?:um|engang|erende)|studiengang|bachelor(?:arbeit|studiengang)?|semester\b|ects\b|immatrikul|studienplatz|zulassung zum studium|hochschule\b|fachhochschule|universit[äa]t\b|technische\s+universit|bewerb(?:ung|en) (?:auf|für|zum|um) (?:den |einen |das )?master|campus\b|lehrplan\b|studienordnung/i;
+
+// Gibt true zurück wenn ein Web-Treffer offensichtlich ein akademisches Angebot
+// (Studiengang, Uni-Seite, Studienportal) beschreibt und keine Markenverletzung sein kann.
+export function isAcademicHit(h: {
+  domain: string;
+  title: string | null;
+  snippet: string | null;
+}): boolean {
+  const d = h.domain.toLowerCase().replace(/^www\./, "");
+  if (ACADEMIC_DOMAIN_RE.test(d)) return true;
+  if (ACADEMIC_PORTALS.has(d) || [...ACADEMIC_PORTALS].some((p) => d.endsWith("." + p))) return true;
+  const text = `${h.title ?? ""} ${h.snippet ?? ""}`;
+  return ACADEMIC_CONTENT_RE.test(text);
+}
+
 export function envOwnDomains(): string[] {
   return (process.env.BRAND_OWN_DOMAINS ?? "")
     .split(",")
