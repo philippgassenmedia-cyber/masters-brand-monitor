@@ -342,7 +342,9 @@ function DpmaScanClientDesktop() {
       }
 
       // 2. Always fetch new trademarks — even on final tick when job just completed
-      const tmRes = await fetch(`/api/trademarks/recent?since=${encodeURIComponent(sinceTs)}`);
+      // subtract 60s from sinceTs to buffer against clock skew between browser and DB server
+      const sinceWithBuffer = new Date(new Date(sinceTs).getTime() - 60_000).toISOString();
+      const tmRes = await fetch(`/api/trademarks/recent?since=${encodeURIComponent(sinceWithBuffer)}`);
       if (tmRes.ok) {
         const { trademarks } = await tmRes.json() as {
           trademarks: Array<{ id: string; aktenzeichen: string; markenname: string; relevance_score: number | null; resolved_website: string | null; quelle: string }>

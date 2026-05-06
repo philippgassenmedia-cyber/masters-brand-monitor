@@ -88,11 +88,13 @@ async function processClusterHits(
     try{await dPage.goto(`https://register.dpma.de/DPMAregister/marke/register/${h.az}/DE`,{timeout:20000});await dPage.waitForTimeout(2500);const d=parseDetail(await dPage.textContent("body")??"");inh=d.inhaber;kl=d.klassen;}catch{}
     const m=matchType(h.name||h.az,stems);
     try{
-      const{data:ex}=await db.from("trademarks").select("id").eq("aktenzeichen",h.az).eq("markenstamm",m.stem).maybeSingle();
-      if(ex){await db.from("trademarks").update({last_seen_at:new Date().toISOString()}).eq("id",ex.id);updC++;continue;}
+      const{data:ex,error:selErr}=await db.from("trademarks").select("id").eq("aktenzeichen",h.az).eq("markenstamm",m.stem).maybeSingle();
+      if(selErr){console.log(`      ⚠️ DB-Lesefehler: ${selErr.message}`);errors++;continue;}
+      if(ex){const{error:updErr}=await db.from("trademarks").update({last_seen_at:new Date().toISOString()}).eq("id",ex.id);if(updErr)console.log(`      ⚠️ Update-Fehler: ${updErr.message}`);updC++;continue;}
       await new Promise(r=>setTimeout(r,2000));
       const cl=await classify(h.name||h.az,h.az,inh,kl,m);
-      await db.from("trademarks").insert({aktenzeichen:h.az,markenname:h.name||`[${h.az}]`,anmelder:inh,status:h.st,nizza_klassen:kl,quelle:"dpma_register",match_type:m.type,markenstamm:m.stem,register_url:`https://register.dpma.de/DPMAregister/marke/register/${h.az}/DE`,relevance_score:cl.score,branchenbezug:cl.branchenbezug,prioritaet:cl.prioritaet,begruendung:cl.begruendung});
+      const{error:insErr}=await db.from("trademarks").insert({aktenzeichen:h.az,markenname:h.name||`[${h.az}]`,anmelder:inh,status:h.st,nizza_klassen:kl,quelle:"dpma_register",match_type:m.type,markenstamm:m.stem,register_url:`https://register.dpma.de/DPMAregister/marke/register/${h.az}/DE`,relevance_score:cl.score,branchenbezug:cl.branchenbezug,prioritaet:cl.prioritaet,begruendung:cl.begruendung});
+      if(insErr){console.log(`      ❌ Insert-Fehler: ${insErr.message}`);errors++;continue;}
       newC++;console.log(`      ✅ [${i+1}/${stemHits.length}] ${h.name} → Score ${cl.score} (${cl.prioritaet})`);
     }catch(e){if(!(e as Error).message.includes("duplicate"))errors++;}
   }
@@ -149,16 +151,18 @@ async function processEuipoClusterHits(
     const h = hits[i];
     const m = matchType(h.name||h.az, stems);
     try {
-      const {data:ex} = await db.from("trademarks").select("id").eq("aktenzeichen",h.az).eq("markenstamm",m.stem).maybeSingle();
-      if (ex) {await db.from("trademarks").update({last_seen_at:new Date().toISOString()}).eq("id",ex.id);updC++;continue;}
+      const {data:ex,error:selErr} = await db.from("trademarks").select("id").eq("aktenzeichen",h.az).eq("markenstamm",m.stem).maybeSingle();
+      if (selErr) {console.log(`      ⚠️ DB-Lesefehler: ${selErr.message}`);errors++;continue;}
+      if (ex) {const{error:updErr}=await db.from("trademarks").update({last_seen_at:new Date().toISOString()}).eq("id",ex.id);if(updErr)console.log(`      ⚠️ Update-Fehler: ${updErr.message}`);updC++;continue;}
       await new Promise(r=>setTimeout(r,2000));
       const cl = await classify(h.name||h.az, h.az, h.inhaber, h.nizzaKlassen, m);
-      await db.from("trademarks").insert({
+      const {error:insErr} = await db.from("trademarks").insert({
         aktenzeichen: h.az, markenname: h.name||`[EUTM ${h.az}]`, anmelder: h.inhaber, status: h.status,
         nizza_klassen: h.nizzaKlassen, quelle: "euipo", match_type: m.type, markenstamm: m.stem,
         register_url: `https://euipo.europa.eu/eSearch/#details/trademarks/${h.az}`,
         relevance_score: cl.score, branchenbezug: cl.branchenbezug, prioritaet: cl.prioritaet, begruendung: cl.begruendung,
       });
+      if (insErr) {console.log(`      ❌ Insert-Fehler: ${insErr.message}`);errors++;continue;}
       newC++;
       console.log(`      ✅ [${i+1}/${hits.length}] ${h.name} → Score ${cl.score} (${cl.prioritaet})`);
     } catch(e){if(!(e as Error).message.includes("duplicate"))errors++;}
