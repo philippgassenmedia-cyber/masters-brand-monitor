@@ -5,7 +5,7 @@ import { runScheduledScan } from "@/lib/scheduled-runner";
 
 const CreateSchema = z.object({
   scheduled_at: z.string().min(1),
-  scan_type: z.enum(["web", "dpma", "all"]).default("all"),
+  scan_type: z.enum(["web", "dpma", "euipo", "all"]).default("all"),
   notes: z.string().optional(),
 });
 

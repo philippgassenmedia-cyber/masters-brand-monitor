@@ -314,33 +314,34 @@ function DpmaScanClientDesktop() {
 
   const runPoll = useCallback(async (sinceTs: string, jobId: string) => {
     try {
-      // Check job status
-      const scansRes = await fetch("/api/scheduled-scans");
-      if (scansRes.ok) {
-        const { scans } = await scansRes.json() as { scans: Array<{ id: string; status: string; result?: Record<string, unknown> }> };
-        const job = scans.find((s) => s.id === jobId);
-        if (job) {
-          setAgentScan((prev) => {
-            const log = [...prev.log];
-            if (job.status === "running" && prev.jobStatus !== "running") {
-              log.push({ ts: Date.now(), tone: "ok", text: "Agent hat Auftrag aufgenommen — Scan läuft…" });
+      // 1. Check job status
+      let jobDone = false;
+      if (jobId) {
+        const scansRes = await fetch("/api/scheduled-scans");
+        if (scansRes.ok) {
+          const { scans } = await scansRes.json() as { scans: Array<{ id: string; status: string; result?: Record<string, unknown> }> };
+          const job = scans.find((s) => s.id === jobId);
+          if (job) {
+            setAgentScan((prev) => {
+              const log = [...prev.log];
+              if (job.status === "running" && prev.jobStatus !== "running") {
+                log.push({ ts: Date.now(), tone: "ok", text: "Agent hat Auftrag aufgenommen — Scan läuft…" });
+              }
+              if ((job.status === "completed" || job.status === "partial") && prev.jobStatus !== job.status) {
+                const r = job.result as { new?: number; updated?: number; found?: number; errors?: number } | undefined;
+                log.push({ ts: Date.now(), tone: "ok", text: `Scan abgeschlossen: ${r?.new ?? 0} neu, ${r?.updated ?? 0} bekannt, ${r?.found ?? 0} gesamt` });
+              }
+              return { ...prev, jobStatus: job.status, log };
+            });
+            if (job.status === "completed" || job.status === "partial") {
+              jobDone = true;
+              stopPoll(); // stop future ticks, but still fetch trademarks below
             }
-            if ((job.status === "completed" || job.status === "partial") && prev.jobStatus !== job.status) {
-              const r = job.result as { new?: number; updated?: number; found?: number; errors?: number } | undefined;
-              log.push({ ts: Date.now(), tone: "ok", text: `Scan abgeschlossen: ${r?.new ?? 0} neu, ${r?.updated ?? 0} bekannt, ${r?.found ?? 0} gesamt` });
-            }
-            return { ...prev, jobStatus: job.status, log };
-          });
-
-          if (job.status === "completed" || job.status === "partial") {
-            stopPoll();
-            setAgentScan((prev) => ({ ...prev, phase: "done" }));
-            return;
           }
         }
       }
 
-      // Fetch new trademarks since job was created
+      // 2. Always fetch new trademarks — even on final tick when job just completed
       const tmRes = await fetch(`/api/trademarks/recent?since=${encodeURIComponent(sinceTs)}`);
       if (tmRes.ok) {
         const { trademarks } = await tmRes.json() as {
@@ -373,6 +374,11 @@ function DpmaScanClientDesktop() {
             };
           });
         }
+      }
+
+      // 3. Set done only after trademark fetch is complete
+      if (jobDone) {
+        setAgentScan((prev) => ({ ...prev, phase: "done" }));
       }
     } catch {
       // Network hiccup — wait for next tick
