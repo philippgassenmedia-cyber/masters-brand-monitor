@@ -7,12 +7,12 @@ export async function POST() {
   if (!auth.user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 
   const db = getSupabaseAdminClient();
-  const { count, error } = await db
+  const { data, error } = await db
     .from("hits")
     .update({ status: "new" })
-    .neq("status", "new") // nur die, die nicht schon "new" sind
-    .select("id", { count: "exact", head: true });
+    .neq("status", "new")
+    .select("id");
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ ok: true, updated: count ?? 0 });
+  return NextResponse.json({ ok: true, updated: (data ?? []).length });
 }
