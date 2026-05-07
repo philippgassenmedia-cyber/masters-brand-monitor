@@ -31,7 +31,7 @@ export function ScanOverlay() {
   const isDone = state.phase === "done" || state.phase === "stopped";
   const isError = state.phase === "error";
 
-  const scanPageHref = state.source === "web" ? "/scan" : "/trademarks/scan";
+  const scanPageHref = "/scan";
 
   return (
     <div className="fixed bottom-5 right-5 z-50">

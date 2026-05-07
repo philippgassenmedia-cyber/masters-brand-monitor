@@ -120,7 +120,7 @@ export function Sidebar({
   const scanActive = scan.phase !== "idle";
   const scanRunning = scan.running;
   const scanPct = scan.progress.total > 0 ? Math.round((scan.progress.current / scan.progress.total) * 100) : 0;
-  const scanHref = scan.source === "web" ? "/scan" : "/trademarks/scan";
+  const scanHref = "/scan";
   const SOURCE_LABEL: Record<string, string> = { web: "Web-Scan", dpma: "DPMA-Suche", euipo: "EUIPO-Suche" };
   const latestHits = scan.rawHits.slice(0, 3) as Array<Record<string, unknown>>;
   return (

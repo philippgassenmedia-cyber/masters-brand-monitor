@@ -108,10 +108,10 @@ export function TrademarksClient({
         </div>
         <div className="flex items-center gap-2">
           <Link
-            href="/trademarks/scan"
+            href="/scan"
             className="flex h-10 items-center rounded-full bg-stone-900 px-5 text-xs font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] hover:bg-stone-800"
           >
-            Register-Suche (DPMA + EUIPO) →
+            Register-Suche →
           </Link>
           <button
             onClick={triggerDpmaScan}
