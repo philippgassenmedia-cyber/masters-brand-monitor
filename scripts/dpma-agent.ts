@@ -360,28 +360,72 @@ async function runHandelsregisterScan(scanId: string) {
   for (const stem of stems) {
     console.log(`\n📌 Handelsregister Cluster „${stem}":`);
     try {
-      await page.goto("https://www.handelsregister.de/rp_web/mask.do",{timeout:30000});
-      await page.waitForTimeout(2000);
+      // Try current URL first, fall back to old one
+      let loaded = false;
+      for (const url of [
+        "https://www.handelsregister.de/rp_web/welcome.xhtml",
+        "https://www.handelsregister.de/rp_web/mask.do",
+        "https://www.handelsregister.de",
+      ]) {
+        try {
+          await page.goto(url, {timeout:30000});
+          await page.waitForTimeout(2000);
+          loaded = true;
+          break;
+        } catch { /* try next */ }
+      }
+      if (!loaded) { console.log(`   ⚠️ Seite nicht erreichbar`); totalErrors++; continue; }
+
       // Accept cookie consent if present
       try {
-        const consent = page.locator('button:has-text("Akzeptieren"), button:has-text("Alle akzeptieren"), button:has-text("Ich stimme zu")');
+        const consent = page.locator('button:has-text("Akzeptieren"), button:has-text("Alle akzeptieren"), button:has-text("Ich stimme zu"), button:has-text("Accept")');
         await consent.first().click({timeout:3000});
         await page.waitForTimeout(1000);
       } catch {}
-      // Wait for search form
-      try {
-        await page.waitForSelector('input[name="stichwort"], input[name="schlagwoerter"], input[name="terms"], input[id*="stichwort"]',{timeout:10000});
-      } catch {
-        console.log(`   ⚠️ Kein Suchformular gefunden`);
+      // Wait for search form — try multiple known selectors across redesigns
+      const INPUT_SELECTORS = [
+        'input[name="stichwort"]',
+        'input[name="schlagwoerter"]',
+        'input[id*="stichwort"]',
+        'input[id*="schlagwort"]',
+        'input[id*="schlagwoerter"]',
+        'input[name*="schlagwort"]',
+        'input[id*="terms"]',
+        'input[name="terms"]',
+        'input[placeholder*="tichwort"]',
+        'input[placeholder*="uche"]',
+      ];
+      const SUBMIT_SELECTORS = [
+        'input[type="submit"][value*="Suchen"]',
+        'input[type="submit"][value*="suchen"]',
+        'button[type="submit"]:has-text("Suchen")',
+        'button:has-text("Suchen")',
+        'input[name*="suchen"]',
+        'input[name*="Suchen"]',
+        'button[id*="uche"]',
+        'input[type="submit"]',
+      ];
+      let foundInput = false;
+      for (const sel of INPUT_SELECTORS) {
+        try { await page.waitForSelector(sel, {timeout:3000}); foundInput = true; break; } catch { /* next */ }
+      }
+      if (!foundInput) {
+        // Debug: show what inputs exist on page
+        const allInputs = await page.$$eval('input', els => els.map(e => `${e.tagName}[name="${e.getAttribute('name')}" id="${e.getAttribute('id')}" type="${e.getAttribute('type')}"]`));
+        console.log(`   ⚠️ Kein Suchformular gefunden. URL: ${page.url()}`);
+        console.log(`   🔍 Gefundene Inputs: ${allInputs.slice(0,8).join(' | ') || '(keine)'}`);
         totalErrors++;
         continue;
       }
       // Fill search term
-      const searchInput = page.locator('input[name="stichwort"], input[name="schlagwoerter"], input[name="terms"], input[id*="stichwort"]');
+      const searchInput = page.locator(INPUT_SELECTORS.join(', '));
       await searchInput.first().fill(stem);
-      // Submit
-      const searchBtn = page.locator('input[type="submit"][value*="Suchen"], button[type="submit"]:has-text("Suchen"), input[name*="suchen"]');
-      await searchBtn.first().click({timeout:5000});
+      // Submit — try each selector
+      let clicked = false;
+      for (const sel of SUBMIT_SELECTORS) {
+        try { await page.locator(sel).first().click({timeout:2000}); clicked = true; break; } catch { /* next */ }
+      }
+      if (!clicked) { console.log(`   ⚠️ Submit-Button nicht gefunden`); totalErrors++; continue; }
       await page.waitForLoadState("networkidle",{timeout:30000});
       await page.waitForTimeout(3000);
 
