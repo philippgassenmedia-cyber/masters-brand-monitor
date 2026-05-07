@@ -47,12 +47,12 @@ export async function POST(req: Request) {
     const base64 = Buffer.from(bytes).toString("base64");
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({
-      model: process.env.GEMINI_MODEL ?? "gemini-2.0-flash",
-      generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
-    });
 
-    const prompt = `Du bist ein Datenextraktions-Assistent für Markenrechts-Berichte.
+    const primaryModel = process.env.GEMINI_MODEL ?? "gemini-2.0-flash";
+    const fallbackModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    const modelsToTry = [primaryModel, ...fallbackModels.filter((m) => m !== primaryModel)];
+
+    const extractPrompt = `Du bist ein Datenextraktions-Assistent für Markenrechts-Berichte.
 Extrahiere ALLE Markenverletzungs-Treffer aus dem beigefügten PDF-Bericht.
 
 Für jeden Treffer erstelle ein JSON-Objekt:
@@ -79,20 +79,35 @@ Für jeden Treffer erstelle ein JSON-Objekt:
 Antworte AUSSCHLIESSLICH mit einem JSON-Array: [{ ... }, { ... }]
 Leeres Array [] wenn keine Treffer gefunden.`;
 
-    try {
-      const result = await model.generateContent([
-        prompt,
-        { inlineData: { mimeType: "application/pdf", data: base64 } },
-      ]);
-      const text = result.response.text();
-      const parsed = z.array(HitSchema).parse(JSON.parse(text));
-      return NextResponse.json({ hits: parsed, count: parsed.length });
-    } catch (e) {
-      return NextResponse.json(
-        { error: `Extraktion fehlgeschlagen: ${(e as Error).message.slice(0, 200)}` },
-        { status: 500 },
-      );
+    const parts = [
+      extractPrompt,
+      { inlineData: { mimeType: "application/pdf", data: base64 } } as const,
+    ];
+
+    let lastError: Error | null = null;
+    for (const modelId of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelId,
+          generationConfig: { responseMimeType: "application/json", temperature: 0.1 },
+        });
+        const result = await model.generateContent(parts);
+        const text = result.response.text();
+        const parsed = z.array(HitSchema).parse(JSON.parse(text));
+        return NextResponse.json({ hits: parsed, count: parsed.length });
+      } catch (e) {
+        const msg = (e as Error).message ?? "";
+        const isOverload = msg.includes("503") || msg.includes("overloaded") || msg.includes("Service Unavailable");
+        lastError = e as Error;
+        if (!isOverload) break; // Non-503 error — don't retry with different model
+        console.warn(`[import] ${modelId} unavailable, trying next model…`);
+      }
     }
+
+    return NextResponse.json(
+      { error: `Extraktion fehlgeschlagen: ${lastError?.message.slice(0, 200) ?? "Unbekannter Fehler"}` },
+      { status: 500 },
+    );
   }
 
   // ── JSON-Insert (manuell oder nach PDF-Bestätigung) ───────────────────────
