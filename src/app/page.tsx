@@ -168,7 +168,7 @@ function KanbanColumn({
           </Link>
         )}
       </div>
-      <div className={`flex-1 space-y-2 overflow-y-auto p-3 ${fullView ? "max-h-[70vh]" : ""}`}>
+      <div className={`flex-1 space-y-2 overflow-y-auto p-3 ${fullView ? "max-h-[calc(100vh-280px)]" : ""}`}>
         {shown.length === 0 && (
           <p className="px-1 py-6 text-center text-xs text-stone-400">{emptyText}</p>
         )}
@@ -294,7 +294,7 @@ export default async function DashboardPage({
       )}
 
       {/* KPI */}
-      <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <KpiCard label="Gesamt" value={total} href="/hits" trend={allSeries} />
         <KpiCard label="Offen" value={allOpen} tone="brand" />
         <KpiCard label="In Bearbeitung" value={allReview} tone="amber" />

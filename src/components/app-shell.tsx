@@ -29,7 +29,7 @@ export async function AppShell({
 
   return (
     <div className="h-screen overflow-hidden p-2 md:p-5">
-      <div className="glass-shell mx-auto flex h-full w-full max-w-[1500px] gap-0 p-2 md:gap-5 md:p-5">
+      <div className="glass-shell mx-auto flex h-full w-full max-w-[1500px] gap-0 p-2 md:gap-5 md:p-5 2xl:max-w-[1800px]">
         <MobileShell sidebar={sidebar}>
           {children}
         </MobileShell>

@@ -84,6 +84,7 @@ export default async function TrademarkDetailPage({
 
   return (
     <AppShell user={auth.user}>
+      <div className="pb-10 xl:max-w-5xl">
       <Link href="/trademarks" className="text-xs text-stone-500 hover:text-stone-800">
         ← Zurück zur Übersicht
       </Link>
@@ -183,7 +184,7 @@ export default async function TrademarkDetailPage({
       {/* Marken-Details */}
       <section className="glass mt-6 p-6">
         <h2 className="mb-4 text-lg font-semibold text-stone-900">Marken-Details</h2>
-        <div className="grid grid-cols-2 gap-4 text-sm">
+        <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <Field label="Anmelder / Inhaber" value={tm.anmelder ?? "—"} />
           <Field label="Status" value={tm.status ?? "—"} />
           <Field label="Markenform" value={tm.markenform ?? "—"} />
@@ -325,6 +326,7 @@ export default async function TrademarkDetailPage({
       </section>
 
       <FeedbackForm itemType="trademark" itemId={tm.id} currentScore={tm.relevance_score} />
+      </div>
     </AppShell>
   );
 }

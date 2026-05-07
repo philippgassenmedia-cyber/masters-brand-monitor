@@ -114,7 +114,7 @@ export function Sidebar({
   const SOURCE_LABEL: Record<string, string> = { web: "Web-Scan", dpma: "DPMA-Suche", euipo: "EUIPO-Suche" };
   const latestHits = scan.rawHits.slice(0, 3) as Array<Record<string, unknown>>;
   return (
-    <aside className="glass-sidebar relative z-10 flex h-full w-full shrink-0 flex-col overflow-hidden p-4 md:w-60 md:p-5">
+    <aside className="glass-sidebar relative z-10 flex h-full w-full shrink-0 flex-col overflow-hidden p-4 md:w-60 md:p-5 xl:w-64">
       <div className="mb-8 flex items-center gap-2">
         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-900 text-lg font-black text-white shadow-sm">
           M

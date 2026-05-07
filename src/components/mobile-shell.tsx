@@ -60,7 +60,7 @@ export function MobileShell({ sidebar, children }: { sidebar: ReactNode; childre
         </div>
 
         {/* Page content */}
-        <div className="scroll-area min-w-0 flex-1 overflow-y-auto rounded-2xl px-1 pb-4 pt-1">
+        <div className="scroll-area min-w-0 flex-1 overflow-y-auto rounded-2xl px-2 pb-4 pt-1 sm:px-3 md:px-4">
           {children}
         </div>
       </div>
