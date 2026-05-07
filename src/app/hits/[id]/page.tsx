@@ -7,6 +7,7 @@ import { canonicalKey, resolveCompany } from "@/lib/dedupe";
 import type { Hit } from "@/lib/types";
 import { FeedbackForm } from "@/components/feedback-form";
 import { NotesFeed } from "@/components/notes-feed";
+import { DeleteHitButton } from "@/components/delete-hit-button";
 
 export const dynamic = "force-dynamic";
 
@@ -63,8 +64,11 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
   return (
     <AppShell user={auth.user}>
       <div className="pb-16">
-        {/* Back */}
-        <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">← Zurück zur Übersicht</Link>
+        {/* Back + Delete */}
+        <div className="flex items-center justify-between">
+          <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">← Zurück zur Übersicht</Link>
+          <DeleteHitButton hitId={hit.id} redirectAfter />
+        </div>
 
         {/* Critical/High alert banner — full width */}
         {cfg.banner && (

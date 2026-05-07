@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { ExcludeButton } from "./exclude-button";
+import { DeleteHitButton } from "./delete-hit-button";
 import type { HitStatus } from "@/lib/types";
 
 const STATUS_LABEL: Record<HitStatus, string> = {
@@ -161,7 +162,10 @@ export function HitsTable({
                     {new Date(g.lastSeen).toLocaleDateString("de-DE")}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    <ExcludeButton hitId={g.primaryId} domain={g.primaryDomain} />
+                    <div className="flex items-center justify-end gap-2">
+                      <ExcludeButton hitId={g.primaryId} domain={g.primaryDomain} />
+                      <DeleteHitButton hitId={g.primaryId} />
+                    </div>
                   </td>
                 </tr>
               );
