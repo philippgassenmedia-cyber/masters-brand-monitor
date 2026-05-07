@@ -452,8 +452,11 @@ async function runHandelsregisterScan(scanId: string) {
 // ── Poll Loop ───────────────────────────────────────────────
 async function poll() {
   try {
+    // Only pick up jobs scheduled within the last 2 hours
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const {data} = await db.from("scheduled_scans").select("id,scan_type")
       .eq("status","pending").in("scan_type",["dpma","euipo","handelsregister","all"])
+      .gte("scheduled_at", twoHoursAgo)
       .lte("scheduled_at",new Date().toISOString())
       .order("scheduled_at").limit(1);
     if (data?.length) {
@@ -477,6 +480,16 @@ async function poll() {
 (async()=>{
   const {error} = await db.from("scheduled_scans").select("id").limit(1);
   if(error){console.error("❌ Supabase-Fehler:",error.message);process.exit(1);}
+
+  // Expire stale pending jobs (older than 2 hours) so they are never picked up
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const {count} = await db.from("scheduled_scans")
+    .update({status:"expired"})
+    .eq("status","pending")
+    .lt("scheduled_at", twoHoursAgo)
+    .select("id", {count:"exact", head:true});
+  if (count && count > 0) console.log(`⚠️  ${count} veraltete Aufträge als expired markiert.`);
+
   console.log("✅ Supabase verbunden. Warte auf Aufträge…\n");
   await poll();
   setInterval(poll, POLL_INTERVAL);
