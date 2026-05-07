@@ -187,7 +187,7 @@ async function processEuipoClusterHits(
 
 async function runEuipoScan(scanId: string, klassen = [35,36,37,42]) {
   console.log(`\n🌍 EUIPO Scan ${scanId.slice(0,8)}… gestartet`);
-  await db.from("scheduled_scans").update({status:"running",started_at:new Date().toISOString()}).eq("id",scanId);
+  // status already set to "running" by claim_next_scan_job()
 
   const {data:sd} = await db.from("brand_stems").select("stamm").eq("aktiv",true);
   const stems = (sd??[]).map(s=>s.stamm as string); if(!stems.length) stems.push("master");
@@ -232,7 +232,7 @@ async function runEuipoScan(scanId: string, klassen = [35,36,37,42]) {
 // ── DPMA Scan ───────────────────────────────────────────────
 async function runDpmaScan(scanId: string) {
   console.log(`\n🔍 Scan ${scanId.slice(0,8)}… gestartet`);
-  await db.from("scheduled_scans").update({status:"running",started_at:new Date().toISOString()}).eq("id",scanId);
+  // status already set to "running" by claim_next_scan_job()
 
   const {data:sd} = await db.from("brand_stems").select("stamm").eq("aktiv",true);
   const stems = (sd??[]).map(s=>s.stamm as string); if(!stems.length) stems.push("master");
@@ -344,7 +344,7 @@ async function classifyHrCompany(name: string, sitz: string, registerArt: string
 
 async function runHandelsregisterScan(scanId: string) {
   console.log(`\n📋 Handelsregister Scan ${scanId.slice(0,8)}… gestartet`);
-  await db.from("scheduled_scans").update({status:"running",started_at:new Date().toISOString()}).eq("id",scanId);
+  // status already set to "running" by claim_next_scan_job()
 
   const {data:sd} = await db.from("brand_stems").select("stamm").eq("aktiv",true);
   const stems = (sd??[]).map(s=>s.stamm as string); if(!stems.length) stems.push("master");
@@ -556,15 +556,11 @@ async function runHandelsregisterScan(scanId: string) {
 // ── Poll Loop ───────────────────────────────────────────────
 async function poll() {
   try {
-    // Only pick up jobs scheduled within the last 2 hours
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    const {data} = await db.from("scheduled_scans").select("id,scan_type")
-      .eq("status","pending").in("scan_type",["dpma","euipo","handelsregister","all"])
-      .gte("scheduled_at", twoHoursAgo)
-      .lte("scheduled_at",new Date().toISOString())
-      .order("scheduled_at").limit(1);
+    // Atomic claim: FOR UPDATE SKIP LOCKED ensures only one agent picks up each job
+    const {data} = await db.rpc("claim_next_scan_job") as { data: Array<{id: string; scan_type: string}> | null };
     if (data?.length) {
       const {id, scan_type} = data[0];
+      console.log(`\n🔒 Auftrag ${id.slice(0,8)} übernommen (${scan_type})`);
       if (scan_type === "euipo") {
         await runEuipoScan(id);
       } else if (scan_type === "handelsregister") {
