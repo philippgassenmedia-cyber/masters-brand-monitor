@@ -56,24 +56,20 @@ export function TrademarksClient({
 }) {
   const [showAll, setShowAll] = useState(false);
   const [pending, startTransition] = useTransition();
+  const [pendingHR, startHRTransition] = useTransition();
   const [scanMsg, setScanMsg] = useState<string | null>(null);
   const router = useRouter();
   const visible = showAll ? trademarks : trademarks.slice(0, INITIAL_VISIBLE);
   const hasMore = trademarks.length > INITIAL_VISIBLE;
 
-  const triggerDpmaScan = () => {
+  const triggerScan = (scanType: "dpma" | "handelsregister") => {
     setScanMsg(null);
-    startTransition(async () => {
+    const run = async () => {
       try {
-        // Scheduled Scan erstellen + sofort triggern
         await fetch("/api/scheduled-scans", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            scheduled_at: new Date().toISOString(),
-            scan_type: "dpma",
-            notes: "Manuell gestartet",
-          }),
+          body: JSON.stringify({ scheduled_at: new Date().toISOString(), scan_type: scanType, notes: "Manuell gestartet" }),
         });
         const scanData = await fetch("/api/scheduled-scans").then(r => r.json());
         const pendingScan = (scanData.scans ?? []).find((s: { status: string }) => s.status === "pending");
@@ -84,13 +80,21 @@ export function TrademarksClient({
             body: JSON.stringify({ trigger_id: pendingScan.id }),
           });
         }
-        setScanMsg("DPMA-Scan gestartet. Der lokale Agent nimmt den Auftrag auf. Ergebnisse erscheinen hier automatisch.");
+        setScanMsg(
+          scanType === "handelsregister"
+            ? "Handelsregister-Scan gestartet. Der lokale Agent nimmt den Auftrag auf. Neue Treffer erscheinen im Dashboard."
+            : "DPMA-Scan gestartet. Der lokale Agent nimmt den Auftrag auf. Ergebnisse erscheinen hier automatisch."
+        );
       } catch (e) {
         setScanMsg(`Fehler: ${(e as Error).message}`);
       }
       router.refresh();
-    });
+    };
+    if (scanType === "handelsregister") startHRTransition(run);
+    else startTransition(run);
   };
+
+  const triggerDpmaScan = () => triggerScan("dpma");
 
 
   return (
@@ -115,6 +119,13 @@ export function TrademarksClient({
             className="h-10 rounded-full border border-white/80 bg-white/60 px-5 text-xs font-semibold text-stone-700 hover:bg-white/90 disabled:opacity-60"
           >
             {pending ? "Wird gestartet…" : "DPMA Scan starten"}
+          </button>
+          <button
+            onClick={() => triggerScan("handelsregister")}
+            disabled={pendingHR}
+            className="h-10 rounded-full border border-white/80 bg-white/60 px-5 text-xs font-semibold text-stone-700 hover:bg-white/90 disabled:opacity-60"
+          >
+            {pendingHR ? "Wird gestartet…" : "Handelsregister Scan"}
           </button>
           <Link
             href="/settings/dpma"

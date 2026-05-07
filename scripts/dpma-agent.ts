@@ -51,19 +51,32 @@ function matchType(name: string, stems: string[]) {
   return {type:"fuzzy",stem:stems[0]};
 }
 
-const CLASSIFY_PROMPT = `Bewerte ob eine DPMA-Marke Verwechslungsgefahr mit "MASTER" (Immobilien/Beratung) darstellt.
-WICHTIG: "Master" in Zusammensetzungen wie Mastercard, Webmaster, Masterclass → Score 0-2.
-Nur Immobilien/Makler/Hausverwaltung/Beratung/Consulting-Kontext → Score 5+.
-Andere Branchen (IT, Gaming, Food, Mode) → Score 0-3.
-JSON: {"score":<0-10>,"branchenbezug":"<erkannte Branche>","prioritaet":"<low|medium|high|critical>","begruendung":"<warum relevant oder nicht>"}`;
+const CLASSIFY_PROMPT = `Bewerte ob eine DPMA/EUIPO-Marke Verwechslungsgefahr mit "MASTER" (geschützt für Immobilien & Beratung) darstellt.
+
+NIZZA-KLASSEN — Priorität in dieser Reihenfolge:
+Klasse 36 (Immobilien, Finanzen, Versicherungen) → HÖCHSTE Priorität, Score 7-10 wenn "Master" klar als Marke genutzt wird
+Klasse 37 (Bau, Bauleitung, Reparatur) → HOHE Priorität, Score 6-9
+Klasse 42 (Technische/wissenschaftliche Dienstleistungen) → MITTLERE Priorität, Score 5-8
+Klasse 35 (Unternehmensberatung, Bürodienstleistungen, Vermittlung) → MITTLERE Priorität, Score 5-7
+Andere Klassen (43=Gastronomie, 25=Bekleidung, 9=Software usw.) → KEINE Verletzung der geschützten Bereiche → Score 0-3
+
+WICHTIG:
+- "Master" in Zusammensetzungen wie Mastercard, Webmaster, Masterclass → Score 0-2 (Fremdmarke/generisch)
+- Wenn Klassen angegeben sind und KEINE davon 35, 36, 37, 42 enthält → Score MAXIMAL 3
+- Wenn hasImmo=JA (Klasse 35/36/37/42 vorhanden) → Score mindestens 6 bei eindeutigem Markennamen
+- Andere Branchen (IT, Gaming, Food, Mode) ohne Klasse 35/36/37/42 → Score 0-3
+
+JSON: {"score":<0-10>,"branchenbezug":"<erkannte Branche>","prioritaet":"<low|medium|high|critical>","begruendung":"<warum relevant oder nicht, Klassen berücksichtigen>"}`;
 
 async function classify(name: string, az: string, inhaber: string|null, klassen: number[], match: {type:string}) {
-  const IMMO = new Set([35,36,37,42,43]); const hasImmo = klassen.some(k=>IMMO.has(k));
+  const IMMO = new Set([35,36,37,42]); const hasImmo = klassen.some(k=>IMMO.has(k));
+  // Trademarks in irrelevant classes only → hard cap at 3
+  const hasOtherClassOnly = klassen.length > 0 && !hasImmo;
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,{
       method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({systemInstruction:{parts:[{text:CLASSIFY_PROMPT}]},
-        contents:[{role:"user",parts:[{text:`Marke: ${name}\nAZ: ${az}\n${inhaber?`Inhaber: ${inhaber}`:""}\nKlassen: ${klassen.join(", ")||"keine"}\nImmo-Klasse: ${hasImmo?"JA":"NEIN"}\nMatch: ${match.type}`}]}],
+        contents:[{role:"user",parts:[{text:`Marke: ${name}\nAZ: ${az}\n${inhaber?`Inhaber: ${inhaber}`:""}\nKlassen: ${klassen.join(", ")||"keine"}\nImmo-Klasse (35/36/37/42): ${hasImmo?"JA":"NEIN"}\nMatch: ${match.type}`}]}],
         generationConfig:{responseMimeType:"application/json",temperature:0.2}})});
     if(!r.ok) throw new Error(`${r.status}`);
     const p = JSON.parse((await r.json()).candidates?.[0]?.content?.parts?.[0]?.text??"{}");
@@ -72,8 +85,10 @@ async function classify(name: string, az: string, inhaber: string|null, klassen:
     if(match.type==="exact"&&hasImmo&&geminiImmo){sc=Math.max(sc,9);pr="critical";}
     else if(match.type==="exact"&&hasImmo){sc=Math.max(sc,7);}
     else if(match.type==="compound"&&hasImmo&&geminiImmo){sc=Math.max(sc,7);pr=pr==="low"?"high":pr;}
+    // Hard cap: irrelevant classes cannot exceed 3
+    if(hasOtherClassOnly) sc=Math.min(sc,3);
     return {score:sc,branchenbezug:p.branchenbezug??"",prioritaet:pr,begruendung:p.begruendung??""};
-  } catch { return {score:match.type==="exact"?(hasImmo?7:4):hasImmo?4:2,branchenbezug:hasImmo?"Immobilien-Klasse":"?",prioritaet:"medium",begruendung:"Auto"}; }
+  } catch { return {score:match.type==="exact"?(hasImmo?7:3):hasImmo?4:2,branchenbezug:hasImmo?"Immobilien-Klasse":"?",prioritaet:"medium",begruendung:"Auto"}; }
 }
 
 // ── Details + Klassifizierung + DB-Insert für einen Cluster ──
@@ -170,7 +185,7 @@ async function processEuipoClusterHits(
   return {newC,updC,errors};
 }
 
-async function runEuipoScan(scanId: string, klassen = [36,37,42]) {
+async function runEuipoScan(scanId: string, klassen = [35,36,37,42]) {
   console.log(`\n🌍 EUIPO Scan ${scanId.slice(0,8)}… gestartet`);
   await db.from("scheduled_scans").update({status:"running",started_at:new Date().toISOString()}).eq("id",scanId);
 
@@ -259,7 +274,7 @@ async function runDpmaScan(scanId: string) {
           continue;
         }
         await page.fill('input[name="marke"]',vars[vi]);
-        await page.fill('input[name="klassen"]',"36 37 42");
+        await page.fill('input[name="klassen"]',"35 36 37 42");
         const de=page.locator('input[name="demarke"]');if(!(await de.isChecked()))await de.check();
         try{const em=page.locator('input[name="emmarke"]');if(await em.isChecked())await em.uncheck();}catch{}
         try{const ir=page.locator('input[name="irmarke"]');if(await ir.isChecked())await ir.uncheck();}catch{}
@@ -303,20 +318,154 @@ async function runDpmaScan(scanId: string) {
   console.log(`\n✅ Scan abgeschlossen: ${totalNew} neu, ${totalUpdated} aktualisiert, ${totalErrors} Fehler\n`);
 }
 
+// ── Handelsregister Scan ─────────────────────────────────────
+const HR_CLASSIFY_PROMPT = `Du bewertest ob eine im deutschen Handelsregister eingetragene Firma Verwechslungsgefahr mit der Wortmarke "MASTER" (geschützt für Immobilien & Beratung) darstellt.
+
+Score 9-10: "Master" prominent im Firmennamen + eindeutiger Immobilienbezug (Makler, Hausverwaltung, Bauträger, Real Estate)
+Score 7-8: "Master" im Namen + starker Beratungs- oder Immobilienbezug erkennbar
+Score 5-6: "Master" im Namen + möglicher Bezug zu geschützten Bereichen, Branche unklar
+Score 3-4: "Master" im Namen, klar andere Branche (Gastronomie, Handel, IT, Handwerk)
+Score 1-2: "Master" ist Teil einer Fremdmarke (Mastercard, Webmaster) oder rein generisch
+
+JSON: {"score":<0-10>,"branchenbezug":"<erkannte Branche oder 'unklar'>","prioritaet":"<low|medium|high|critical>","begruendung":"<1-2 Sätze>"}`;
+
+async function classifyHrCompany(name: string, sitz: string, registerArt: string): Promise<{score:number;branchenbezug:string;prioritaet:string;begruendung:string}> {
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_KEY}`,{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({systemInstruction:{parts:[{text:HR_CLASSIFY_PROMPT}]},
+        contents:[{role:"user",parts:[{text:`Firma: ${name}\nSitz: ${sitz||"unbekannt"}\nRegisterart: ${registerArt}`}]}],
+        generationConfig:{responseMimeType:"application/json",temperature:0.2}})});
+    if(!r.ok) throw new Error(`${r.status}`);
+    const p = JSON.parse((await r.json()).candidates?.[0]?.content?.parts?.[0]?.text??"{}");
+    return {score:p.score??3,branchenbezug:p.branchenbezug??"?",prioritaet:p.prioritaet??"low",begruendung:p.begruendung??""};
+  } catch { return {score:3,branchenbezug:"?",prioritaet:"low",begruendung:"Auto"}; }
+}
+
+async function runHandelsregisterScan(scanId: string) {
+  console.log(`\n📋 Handelsregister Scan ${scanId.slice(0,8)}… gestartet`);
+  await db.from("scheduled_scans").update({status:"running",started_at:new Date().toISOString()}).eq("id",scanId);
+
+  const {data:sd} = await db.from("brand_stems").select("stamm").eq("aktiv",true);
+  const stems = (sd??[]).map(s=>s.stamm as string); if(!stems.length) stems.push("master");
+
+  const browser = await chromium.launch({headless:true,channel:"chrome",args:["--headless=new","--disable-blink-features=AutomationControlled","--no-sandbox"]});
+  const ctx = await browser.newContext({userAgent:"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"});
+  const page = await ctx.newPage();
+  await page.addInitScript(()=>{Object.defineProperty(navigator,"webdriver",{get:()=>false});(window as unknown as Record<string,unknown>).chrome={runtime:{}};});
+
+  let totalFound=0, totalNew=0, totalErrors=0;
+  const seenKeys = new Set<string>();
+
+  for (const stem of stems) {
+    console.log(`\n📌 Handelsregister Cluster „${stem}":`);
+    try {
+      await page.goto("https://www.handelsregister.de/rp_web/mask.do",{timeout:30000});
+      await page.waitForTimeout(2000);
+      // Accept cookie consent if present
+      try {
+        const consent = page.locator('button:has-text("Akzeptieren"), button:has-text("Alle akzeptieren"), button:has-text("Ich stimme zu")');
+        await consent.first().click({timeout:3000});
+        await page.waitForTimeout(1000);
+      } catch {}
+      // Wait for search form
+      try {
+        await page.waitForSelector('input[name="stichwort"], input[name="schlagwoerter"], input[name="terms"], input[id*="stichwort"]',{timeout:10000});
+      } catch {
+        console.log(`   ⚠️ Kein Suchformular gefunden`);
+        totalErrors++;
+        continue;
+      }
+      // Fill search term
+      const searchInput = page.locator('input[name="stichwort"], input[name="schlagwoerter"], input[name="terms"], input[id*="stichwort"]');
+      await searchInput.first().fill(stem);
+      // Submit
+      const searchBtn = page.locator('input[type="submit"][value*="Suchen"], button[type="submit"]:has-text("Suchen"), input[name*="suchen"]');
+      await searchBtn.first().click({timeout:5000});
+      await page.waitForLoadState("networkidle",{timeout:30000});
+      await page.waitForTimeout(3000);
+
+      let clusterFound=0;
+      // Paginate through results
+      while (true) {
+        const rows = await page.$$("table.RegPortErg tr, table tr");
+        for (const row of rows) {
+          const cells = await row.$$("td");
+          if (cells.length < 3) continue;
+          const cellTexts = await Promise.all(cells.map(c=>c.textContent().then(t=>(t??'').trim().replace(/\s+/g,' '))));
+          // Find the cell that contains the stem
+          const nameCellIdx = cellTexts.findIndex(t=>t.toLowerCase().includes(stem.toLowerCase())&&t.length>3);
+          if (nameCellIdx < 0) continue;
+          const companyName = cellTexts[nameCellIdx];
+          // Dedup key
+          const key = companyName.toLowerCase().replace(/\s+/g,'');
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          // Extract other fields: registerArt (HRB/HRA), regNr, sitz
+          const registerArt = cellTexts.find(t=>/^HRB?$|^HRA?$|^GnR$|^PR$/i.test(t))??cellTexts.find(t=>/HRB|HRA/i.test(t))??"HRB";
+          const regNr = cellTexts.find(t=>/^\d{3,}$/.test(t))||"";
+          const sitz = cellTexts.find(t=>t.length>2&&t!==companyName&&!/^HRB?$|^HRA?$/i.test(t)&&!/^\d+$/.test(t)&&t!==registerArt)??'';
+          totalFound++; clusterFound++;
+          // Classify
+          await new Promise(r=>setTimeout(r,1500));
+          const cl = await classifyHrCompany(companyName, sitz, registerArt);
+          // Unique URL based on company + court info
+          const urlKey = `https://www.handelsregister.de/rp_web/search.do?stichwort=${encodeURIComponent(companyName)}`;
+          const violCat = cl.score>=9?"clear_violation":cl.score>=7?"suspected_violation":cl.score>=5?"borderline":cl.score>=3?"other_industry":"not_relevant";
+          // Check for existing
+          const {data:ex} = await db.from("hits").select("id").eq("url",urlKey).maybeSingle();
+          if(ex){totalFound--;continue;}
+          const {error:insErr} = await db.from("hits").insert({
+            url:urlKey, domain:"www.handelsregister.de",
+            title:companyName,
+            snippet:`${registerArt} ${regNr} — ${sitz}`.replace(/\s{2,}/g,' ').trim(),
+            company_name:companyName, address:sitz||null,
+            ai_score:cl.score, ai_is_violation:cl.score>=6,
+            ai_reasoning:cl.begruendung,
+            ai_recommendation:cl.prioritaet==="critical"?"Anwalt einschalten":cl.prioritaet==="high"?"Anwalt informieren, prüfen lassen":"Beobachten",
+            ai_violation_category:violCat, ai_model:"handelsregister",
+            ai_analyzed_at:new Date().toISOString(),
+            is_violation:cl.score>=6, status:"new",
+          });
+          if(insErr){if(!insErr.message.includes("duplicate")){console.log(`      ❌ Insert: ${insErr.message}`);totalErrors++;}}
+          else{totalNew++;console.log(`      ✅ ${companyName} — ${sitz} → Score ${cl.score} (${cl.prioritaet})`);}
+        }
+        // Next page
+        const nx = await page.$('a:has-text("Weiter"), a:has-text(">>"), a[title*="nächste"]');
+        if(!nx) break;
+        try{await nx.click();await page.waitForLoadState("networkidle",{timeout:20000});await page.waitForTimeout(2000);}catch{break;}
+      }
+      console.log(`   ✓ ${clusterFound} gefunden für „${stem}"`);
+    } catch(e){console.log(`   ❌ ${(e as Error).message.slice(0,80)}`);totalErrors++;}
+    if(stems.indexOf(stem)<stems.length-1){console.log(`   ⏳ 10s Pause…`);await new Promise(r=>setTimeout(r,10000));}
+  }
+
+  await page.close(); await ctx.close(); await browser.close();
+  await db.from("scheduled_scans").update({
+    status:totalErrors>0?"partial":"completed",
+    completed_at:new Date().toISOString(),
+    result:{found:totalFound,new:totalNew,errors:totalErrors},
+  }).eq("id",scanId);
+  console.log(`\n✅ Handelsregister Scan: ${totalNew} neu, ${totalErrors} Fehler\n`);
+}
+
 // ── Poll Loop ───────────────────────────────────────────────
 async function poll() {
   try {
     const {data} = await db.from("scheduled_scans").select("id,scan_type")
-      .eq("status","pending").in("scan_type",["dpma","euipo","all"])
+      .eq("status","pending").in("scan_type",["dpma","euipo","handelsregister","all"])
       .lte("scheduled_at",new Date().toISOString())
       .order("scheduled_at").limit(1);
     if (data?.length) {
       const {id, scan_type} = data[0];
       if (scan_type === "euipo") {
         await runEuipoScan(id);
+      } else if (scan_type === "handelsregister") {
+        await runHandelsregisterScan(id);
       } else if (scan_type === "all") {
         await runDpmaScan(id);
-        await runEuipoScan(id); // re-sets status to running, then completes
+        await runEuipoScan(id);
+        await runHandelsregisterScan(id);
       } else {
         await runDpmaScan(id);
       }
