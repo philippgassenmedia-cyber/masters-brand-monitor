@@ -425,9 +425,24 @@ async function runHandelsregisterScan(scanId: string) {
       await page.waitForTimeout(3000);
       console.log(`   ℹ️ Suchseite geladen: ${page.url()}`);
 
+      // Click "Normale Suche" tab to trigger JSF AJAX and render the search form
+      for (const sel of [
+        'a:has-text("Normale Suche")',
+        'li:has-text("Normale Suche") a',
+        '[class*="tab"]:has-text("Normale Suche")',
+        'a[href*="search"]',
+      ]) {
+        try {
+          await page.locator(sel).first().click({timeout:3000});
+          await page.waitForLoadState("networkidle", {timeout:15000});
+          await page.waitForTimeout(2000);
+          break;
+        } catch {}
+      }
+
       // Debug: log visible text snippet
       const searchText = await page.evaluate(() => document.body?.innerText?.slice(0,200) ?? '').catch(()=>'');
-      console.log(`   📄 ${searchText.replace(/\s+/g,' ').slice(0,120)}`);
+      console.log(`   📄 ${searchText.replace(/\s+/g,' ').slice(0,150)}`);
 
       // Wait for a visible text input (not hidden JSF state fields)
       const INPUT_SELECTORS = [
@@ -435,8 +450,12 @@ async function runHandelsregisterScan(scanId: string) {
         'input[id*="stichwort"]:not([type="hidden"])',
         'input[id*="schlagwort"]:not([type="hidden"])',
         'input[name*="schlagwort"]:not([type="hidden"])',
+        'input[id*="Schlagwort"]:not([type="hidden"])',
+        'input[id*="keyword"]:not([type="hidden"])',
+        'input[id*="search"]:not([type="hidden"])',
+        'input[type="text"]:visible',
         'input[type="text"]',
-        'input:not([type="hidden"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"])',
+        'input:not([type="hidden"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"]):not([type="button"])',
       ];
       const SUBMIT_SELECTORS = [
         'input[type="submit"][value*="Suchen"]',
