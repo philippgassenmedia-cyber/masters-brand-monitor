@@ -200,37 +200,99 @@ export async function POST(req: Request) {
             rawResults += results.length;
             send({ type: "query:done", resultCount: results.length, city: q.city });
 
+            // ── Step 1: Filter candidates, batch-check existing ──────────────
+            const candidates: Array<{ url: string; host: string; result: typeof results[0] }> = [];
             for (const result of results) {
-              try {
-                const host = hostOf(result.url);
-                if (!host || isExcluded(result.url, excluded)) continue;
-                if (isAcademicHit({ domain: host, title: result.title, snippet: result.snippet })) continue;
+              const host = hostOf(result.url);
+              if (!host || isExcluded(result.url, excluded)) continue;
+              if (isAcademicHit({ domain: host, title: result.title, snippet: result.snippet })) continue;
+              candidates.push({ url: result.url, host, result });
+            }
 
-                // Check if already exists
-                const { data: existing } = await db
+            // Single DB query for all candidate URLs — avoids N round-trips
+            const { data: existingRows } = candidates.length > 0
+              ? await db
                   .from("hits")
-                  .select("id")
-                  .eq("url", result.url)
-                  .maybeSingle();
+                  .select("id, url, status, title, snippet")
+                  .in("url", candidates.map((c) => c.url))
+              : { data: [] as Array<{ id: string; url: string; status: string; title: string | null; snippet: string | null }> };
+
+            const existingByUrl = new Map((existingRows ?? []).map((h) => [h.url, h]));
+            const now = new Date().toISOString();
+
+            // ── Step 2: Process each candidate ───────────────────────────────
+            for (const { url, host, result } of candidates) {
+              try {
+                const existing = existingByUrl.get(url);
 
                 if (existing) {
-                  await db
-                    .from("hits")
-                    .update({ last_seen_at: new Date().toISOString() })
-                    .eq("id", existing.id);
-                  updatedHits++;
-                  send({ type: "hit:update", url: result.url });
+                  if (existing.status === "dismissed") {
+                    // Re-check if content changed — if so, re-analyze and reopen
+                    const titleChanged = result.title !== existing.title;
+                    const snip = (s: string | null) => (s ?? "").slice(0, 150);
+                    const snippetChanged = snip(result.snippet) !== snip(existing.snippet);
+
+                    if (titleChanged || snippetChanged) {
+                      // Content changed → scrape + Gemini → reset to new
+                      const profile = await scrapeImpressum(url).catch(() => null);
+                      let analysis: Awaited<ReturnType<typeof analyzeHitWithGemini>> | null = null;
+                      try {
+                        analysis = await analyzeHitWithGemini({
+                          raw: { url, title: result.title, snippet: result.snippet },
+                          profile,
+                        });
+                      } catch (e) {
+                        errorCount++;
+                        send({ type: "error", message: `KI-Analyse fehlgeschlagen für ${host}: ${(e as Error).message.slice(0, 120)}` });
+                      }
+
+                      await db.from("hits").update({
+                        status: "new",
+                        title: result.title,
+                        snippet: result.snippet,
+                        ai_score: analysis?.score ?? null,
+                        ai_reasoning: analysis?.reasoning ?? null,
+                        ai_recommendation: analysis?.recommendation ?? null,
+                        violation_category: analysis?.violation_category ?? null,
+                        ai_is_violation: analysis?.is_violation ?? null,
+                        company_name: analysis?.subject_company ?? profile?.company_name ?? null,
+                        address: analysis?.subject_company_address ?? profile?.address ?? null,
+                        last_seen_at: now,
+                        updated_at: now,
+                      }).eq("id", existing.id);
+
+                      newHits++;
+                      send({
+                        type: "hit:new",
+                        id: existing.id,
+                        domain: host,
+                        url,
+                        score: analysis?.score ?? null,
+                        company: analysis?.subject_company ?? null,
+                        city: q.city,
+                      });
+                    } else {
+                      // Same content → just refresh timestamp, keep dismissed
+                      await db.from("hits").update({ last_seen_at: now }).eq("id", existing.id);
+                      updatedHits++;
+                      send({ type: "hit:update", url });
+                    }
+                  } else {
+                    // Known non-dismissed hit → refresh timestamp only, no Gemini needed
+                    await db.from("hits").update({ last_seen_at: now }).eq("id", existing.id);
+                    updatedHits++;
+                    send({ type: "hit:update", url });
+                  }
                   continue;
                 }
 
-                // Scrape impressum
-                const profile = await scrapeImpressum(result.url).catch(() => null);
+                // ── New URL: scrape + Gemini + insert ────────────────────────
+                const profile = await scrapeImpressum(url).catch(() => null);
 
-                // Analyze — Fehler nicht fatal: Hit wird auch ohne KI-Daten gespeichert
                 let analysis: Awaited<ReturnType<typeof analyzeHitWithGemini>> | null = null;
                 try {
                   analysis = await analyzeHitWithGemini({
-                    raw: { url: result.url, title: result.title, snippet: result.snippet },
+                    raw: { url, title: result.title, snippet: result.snippet },
                     profile,
                   });
                 } catch (e) {
@@ -238,11 +300,10 @@ export async function POST(req: Request) {
                   send({ type: "error", message: `KI-Analyse fehlgeschlagen für ${host}: ${(e as Error).message.slice(0, 120)}` });
                 }
 
-                // Insert — sofort gespeichert, unabhängig vom weiteren Scan-Verlauf
                 const { data: inserted, error: insertError } = await db
                   .from("hits")
                   .insert({
-                    url: result.url,
+                    url,
                     domain: host,
                     title: result.title,
                     snippet: result.snippet,
@@ -273,14 +334,14 @@ export async function POST(req: Request) {
                   type: "hit:new",
                   id: inserted?.id,
                   domain: host,
-                  url: result.url,
+                  url,
                   score: analysis?.score ?? null,
                   company: analysis?.subject_company ?? profile?.company_name ?? null,
                   city: q.city,
                 });
               } catch (e) {
                 errorCount++;
-                send({ type: "error", message: `Fehler bei ${result.url?.slice(0, 60)}: ${(e as Error).message?.slice(0, 100)}` });
+                send({ type: "error", message: `Fehler bei ${url?.slice(0, 60)}: ${(e as Error).message?.slice(0, 100)}` });
               }
             }
           } catch (e) {
