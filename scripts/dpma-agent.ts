@@ -554,12 +554,44 @@ async function runHandelsregisterScan(scanId: string) {
 }
 
 // ── Poll Loop ───────────────────────────────────────────────
+let rpcAvailable: boolean | null = null; // null = not yet tested
+
+async function claimNextJob(): Promise<{id: string; scan_type: string} | null> {
+  // Try atomic RPC (requires migration 0022 in Supabase)
+  if (rpcAvailable !== false) {
+    try {
+      const {data, error} = await db.rpc("claim_next_scan_job") as { data: Array<{id: string; scan_type: string}> | null; error: unknown };
+      if (!error) {
+        if (rpcAvailable === null) { console.log("✅ Atomarer Job-Claim aktiv (FOR UPDATE SKIP LOCKED)"); rpcAvailable = true; }
+        return data?.[0] ?? null;
+      }
+      // RPC doesn't exist yet — fall through to legacy
+      rpcAvailable = false;
+      console.warn("⚠️  claim_next_scan_job() nicht gefunden — verwende Legacy-Claim. Bitte Migration 0022 in Supabase ausführen.");
+    } catch { rpcAvailable = false; }
+  }
+
+  // Legacy fallback: SELECT then UPDATE (race condition possible with multiple agents)
+  const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+  const {data: rows} = await db.from("scheduled_scans").select("id,scan_type")
+    .eq("status","pending").in("scan_type",["dpma","euipo","handelsregister","all"])
+    .gte("scheduled_at", twoHoursAgo)
+    .lte("scheduled_at", new Date().toISOString())
+    .order("scheduled_at").limit(1);
+  if (!rows?.length) return null;
+  const {id, scan_type} = rows[0];
+  const {error: claimErr} = await db.from("scheduled_scans")
+    .update({status:"running", started_at: new Date().toISOString()})
+    .eq("id", id).eq("status","pending");
+  if (claimErr) return null; // another agent claimed it first
+  return {id, scan_type};
+}
+
 async function poll() {
   try {
-    // Atomic claim: FOR UPDATE SKIP LOCKED ensures only one agent picks up each job
-    const {data} = await db.rpc("claim_next_scan_job") as { data: Array<{id: string; scan_type: string}> | null };
-    if (data?.length) {
-      const {id, scan_type} = data[0];
+    const job = await claimNextJob();
+    if (job) {
+      const {id, scan_type} = job;
       console.log(`\n🔒 Auftrag ${id.slice(0,8)} übernommen (${scan_type})`);
       if (scan_type === "euipo") {
         await runEuipoScan(id);
@@ -572,11 +604,10 @@ async function poll() {
       } else {
         await runDpmaScan(id);
       }
-      // Immediately check for another queued job instead of waiting for the interval
       console.log("\n⏳ Prüfe sofort auf weitere Aufträge…");
       setImmediate(poll);
     }
-  } catch(e){console.error(`⚠️ ${(e as Error).message}`);}
+  } catch(e){ console.error(`⚠️ Poll-Fehler: ${(e as Error).message}`); }
 }
 
 // ── Start ───────────────────────────────────────────────────
@@ -613,7 +644,9 @@ async function poll() {
     .select("id", {count:"exact", head:true});
   if (count && count > 0) console.log(`⚠️  ${count} veraltete Aufträge als expired markiert.`);
 
-  console.log("✅ Supabase verbunden. Warte auf Aufträge…\n");
+  console.log("✅ Supabase verbunden.");
+  console.log(`🔄 Prüfe sofort auf wartende Aufträge…\n`);
   await poll();
+  console.log(`⏱  Kein Auftrag — prüfe alle ${POLL_INTERVAL / 1000}s. Fenster offen lassen.\n`);
   setInterval(poll, POLL_INTERVAL);
 })();
