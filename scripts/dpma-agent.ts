@@ -576,6 +576,9 @@ async function poll() {
       } else {
         await runDpmaScan(id);
       }
+      // Immediately check for another queued job instead of waiting for the interval
+      console.log("\n⏳ Prüfe sofort auf weitere Aufträge…");
+      setImmediate(poll);
     }
   } catch(e){console.error(`⚠️ ${(e as Error).message}`);}
 }
