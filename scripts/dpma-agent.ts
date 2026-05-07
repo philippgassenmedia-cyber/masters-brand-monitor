@@ -356,53 +356,78 @@ async function runHandelsregisterScan(scanId: string) {
 
   let totalFound=0, totalNew=0, totalErrors=0;
   const seenKeys = new Set<string>();
+  const HR_DOMAIN = "www.handelsregister.de";
+  let cookiesAccepted = false;
 
   for (const stem of stems) {
     console.log(`\n📌 Handelsregister Cluster „${stem}":`);
     try {
-      // Try current URL first, fall back to old one
-      let loaded = false;
-      for (const url of [
-        "https://www.handelsregister.de/rp_web/welcome.xhtml",
-        "https://www.handelsregister.de/rp_web/mask.do",
-        "https://www.handelsregister.de",
-      ]) {
-        try {
-          await page.goto(url, {timeout:30000});
-          await page.waitForTimeout(2000);
-          loaded = true;
-          break;
-        } catch { /* try next */ }
-      }
-      if (!loaded) { console.log(`   ⚠️ Seite nicht erreichbar`); totalErrors++; continue; }
+      if (!cookiesAccepted) {
+        // Step 1: load welcome page
+        await page.goto(`https://${HR_DOMAIN}/rp_web/welcome.xhtml`, {timeout:30000});
+        await page.waitForTimeout(4000);
 
-      // Accept cookie consent — HR uses JSF, try button/link/JS-click + form submit
-      try {
-        // Try visible buttons and links with various texts
+        // Step 2: log what's visible for debugging
+        const bodyText = await page.evaluate(() => document.body?.innerText?.slice(0,300) ?? '').catch(()=>'');
+        console.log(`   📄 Seite: ${bodyText.replace(/\s+/g,' ').slice(0,150)}`);
+
+        // Step 3: try to click consent button (broader selectors + longer timeout)
         let accepted = false;
         for (const sel of [
           'button:has-text("Akzeptieren")', 'a:has-text("Akzeptieren")',
-          'button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")',
-          'a:has-text("Zustimmen")', 'button:has-text("OK")', 'a:has-text("OK")',
-          'input[type="submit"][value*="kzept"]', 'input[type="submit"][value*="OK"]',
+          'button:has-text("Ich stimme zu")', 'a:has-text("Ich stimme zu")',
+          'button:has-text("Zustimmen")', 'a:has-text("Zustimmen")',
+          'button:has-text("Einverstanden")', 'a:has-text("Einverstanden")',
+          'button:has-text("Weiter")', 'button:has-text("Verstanden")',
+          'input[type="submit"][value*="kzept"]',
+          '[class*="consent"] button', '[class*="cookie"] button',
+          '[id*="consent"] button', '[id*="cookie"] button',
+          '[class*="accept"]', '[id*="accept"]',
         ]) {
-          try { await page.locator(sel).first().click({timeout:2000}); accepted = true; break; } catch {}
+          try {
+            await page.locator(sel).first().click({timeout:2000});
+            accepted = true;
+            console.log(`   ✓ Cookie-Consent geklickt (${sel})`);
+            break;
+          } catch {}
         }
-        // Fallback: JS click on any element whose text matches
-        if (!accepted) {
-          await page.evaluate(() => {
-            const el = Array.from(document.querySelectorAll('button, a, input[type="submit"]'))
-              .find(e => /akzept|zustimm|einverstanden|weiter|ok/i.test(e.textContent ?? (e as HTMLInputElement).value ?? ''));
-            if (el) (el as HTMLElement).click();
-          });
-        }
-        await page.waitForTimeout(1500);
-      } catch {}
 
-      // Navigate directly to the search page (JSF app — welcome.xhtml ≠ search page)
-      await page.goto("https://www.handelsregister.de/rp_web/search.xhtml", {timeout:30000});
-      await page.waitForTimeout(2000);
+        // Step 4: JS fallback — click anything that looks like consent
+        if (!accepted) {
+          accepted = await page.evaluate(() => {
+            const el = Array.from(document.querySelectorAll('button, a, input[type="submit"], [role="button"]'))
+              .find(e => /akzept|zustimm|einverstanden|verstanden|weiter|accept|consent|agree/i
+                .test((e.textContent ?? '') + ((e as HTMLInputElement).value ?? '')));
+            if (el) { (el as HTMLElement).click(); return true; }
+            return false;
+          }).catch(()=>false);
+          if (accepted) console.log(`   ✓ Cookie-Consent via JS geklickt`);
+        }
+
+        // Step 5: nuclear fallback — inject consent cookies directly
+        if (!accepted) {
+          console.log(`   ⚠️ Kein Consent-Button gefunden — setze Cookie direkt`);
+          await page.context().addCookies([
+            { name: 'cookieConsent',      value: 'true',     domain: HR_DOMAIN, path: '/' },
+            { name: 'cookie_consent',     value: 'accepted', domain: HR_DOMAIN, path: '/' },
+            { name: 'consentAccepted',    value: 'true',     domain: HR_DOMAIN, path: '/' },
+            { name: 'COOKIE_CONSENT',     value: '1',        domain: HR_DOMAIN, path: '/' },
+            { name: 'userConsent',        value: 'true',     domain: HR_DOMAIN, path: '/' },
+          ]);
+        }
+
+        await page.waitForTimeout(1500);
+        cookiesAccepted = true;
+      }
+
+      // Step 6: navigate to search page
+      await page.goto(`https://${HR_DOMAIN}/rp_web/search.xhtml`, {timeout:30000});
+      await page.waitForTimeout(3000);
       console.log(`   ℹ️ Suchseite geladen: ${page.url()}`);
+
+      // Debug: log visible text snippet
+      const searchText = await page.evaluate(() => document.body?.innerText?.slice(0,200) ?? '').catch(()=>'');
+      console.log(`   📄 ${searchText.replace(/\s+/g,' ').slice(0,120)}`);
 
       // Wait for a visible text input (not hidden JSF state fields)
       const INPUT_SELECTORS = [
