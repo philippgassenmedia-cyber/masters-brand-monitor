@@ -129,33 +129,64 @@ export function ExportsClient({
               </div>
             )}
             {exports.map((e) => (
-              <button
+              <div
                 key={e.id}
-                onClick={() => setSelectedExport(e.id)}
-                className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
+                className={`rounded-xl border transition ${
                   selectedExport === e.id
                     ? "border-stone-300 bg-stone-900 text-white"
-                    : "border-white/70 bg-white/60 text-stone-800 hover:bg-white/90"
+                    : "border-white/70 bg-white/60 text-stone-800"
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold">
-                    {new Date(e.exported_at).toLocaleDateString("de-DE")}
-                  </span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase ${
+                <button
+                  onClick={() => setSelectedExport(e.id)}
+                  className="w-full px-3 py-2.5 text-left"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold">
+                      {new Date(e.exported_at).toLocaleDateString("de-DE")}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase ${
+                        selectedExport === e.id
+                          ? "bg-white/20 text-white"
+                          : "bg-stone-100 text-stone-600"
+                      }`}
+                    >
+                      {e.format}
+                    </span>
+                  </div>
+                  <div className={`mt-1 text-[11px] ${selectedExport === e.id ? "text-white/70" : "text-stone-500"}`}>
+                    {e.hit_count} Web · {e.trademark_count} DPMA
+                  </div>
+                </button>
+                {/* Re-export buttons */}
+                <div className={`flex gap-1.5 border-t px-3 py-2 ${selectedExport === e.id ? "border-white/20" : "border-white/60"}`}>
+                  <a
+                    href={`/api/lawyer-export/reexport?exportId=${e.id}&format=csv`}
+                    download
+                    className={`flex-1 rounded-lg py-1 text-center text-[10px] font-semibold transition ${
                       selectedExport === e.id
-                        ? "bg-white/20 text-white"
-                        : "bg-stone-100 text-stone-600"
+                        ? "bg-white/20 text-white hover:bg-white/30"
+                        : "bg-stone-100 text-stone-600 hover:bg-stone-200"
                     }`}
+                    title="Diesen Export erneut als CSV herunterladen"
                   >
-                    {e.format}
-                  </span>
+                    CSV ↓
+                  </a>
+                  <a
+                    href={`/api/lawyer-export/reexport?exportId=${e.id}&format=pdf`}
+                    download
+                    className={`flex-1 rounded-lg py-1 text-center text-[10px] font-semibold transition ${
+                      selectedExport === e.id
+                        ? "bg-white/20 text-white hover:bg-white/30"
+                        : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+                    }`}
+                    title="Diesen Export erneut als PDF herunterladen"
+                  >
+                    PDF ↓
+                  </a>
                 </div>
-                <div className={`mt-1 text-[11px] ${selectedExport === e.id ? "text-white/70" : "text-stone-500"}`}>
-                  {e.hit_count} Web · {e.trademark_count} DPMA
-                </div>
-              </button>
+              </div>
             ))}
           </div>
         </section>
