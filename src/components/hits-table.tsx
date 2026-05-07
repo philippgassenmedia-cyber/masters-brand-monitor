@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { ExcludeButton } from "./exclude-button";
 import { DeleteHitButton } from "./delete-hit-button";
+import { DownloadHitButton } from "./download-hit-button";
 import type { HitStatus } from "@/lib/types";
 
 const STATUS_LABEL: Record<HitStatus, string> = {
@@ -163,6 +164,7 @@ export function HitsTable({
                   </td>
                   <td className="px-5 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
+                      <DownloadHitButton hitId={g.primaryId} />
                       <ExcludeButton hitId={g.primaryId} domain={g.primaryDomain} />
                       <DeleteHitButton hitId={g.primaryId} />
                     </div>

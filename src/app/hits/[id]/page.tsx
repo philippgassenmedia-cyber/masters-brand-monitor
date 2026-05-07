@@ -8,6 +8,7 @@ import type { Hit } from "@/lib/types";
 import { FeedbackForm } from "@/components/feedback-form";
 import { NotesFeed } from "@/components/notes-feed";
 import { DeleteHitButton } from "@/components/delete-hit-button";
+import { DownloadHitButton } from "@/components/download-hit-button";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +68,10 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
         {/* Back + Delete */}
         <div className="flex items-center justify-between">
           <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">← Zurück zur Übersicht</Link>
-          <DeleteHitButton hitId={hit.id} redirectAfter />
+          <div className="flex items-center gap-2">
+            <DownloadHitButton hitId={hit.id} />
+            <DeleteHitButton hitId={hit.id} redirectAfter />
+          </div>
         </div>
 
         {/* Critical/High alert banner — full width */}
