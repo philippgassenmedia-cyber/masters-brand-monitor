@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { AppShell } from "@/components/app-shell";
-import { ScanClient } from "./scan-client";
+import { UnifiedScanClient } from "./unified-scan-client";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export default async function ScanPage() {
 
   return (
     <AppShell user={auth.user}>
-      <ScanClient />
+      <UnifiedScanClient />
     </AppShell>
   );
 }
