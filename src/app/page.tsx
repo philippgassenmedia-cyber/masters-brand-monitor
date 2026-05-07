@@ -10,6 +10,8 @@ import { EnrichHitsButton } from "@/components/enrich-hits-button";
 import { AgentDownloadButton } from "@/components/agent-download-button";
 import { ViewerDashboard } from "@/components/viewer-dashboard";
 import { getUserRole } from "@/lib/auth/get-role";
+import { KanbanBoard } from "@/components/kanban-board";
+import type { KanbanCard } from "@/components/kanban-board";
 import type { Hit, HitStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -54,139 +56,6 @@ function buildDailySeries(timestamps: string[], days = 14): number[] {
   return Object.values(buckets);
 }
 
-function scoreBg(score: number | null) {
-  if (score === null) return "bg-stone-200/70 text-stone-600";
-  if (score >= 7) return "bg-rose-100 text-rose-800";
-  if (score >= 4) return "bg-amber-100 text-amber-800";
-  return "bg-emerald-100 text-emerald-800";
-}
-
-const STATUS_CHIP: Record<HitStatus, string> = {
-  new: "bg-stone-100 text-stone-600",
-  reviewing: "bg-amber-100 text-amber-700",
-  confirmed: "bg-rose-100 text-rose-700",
-  dismissed: "bg-emerald-100 text-emerald-700",
-  sent_to_lawyer: "bg-purple-100 text-purple-700",
-  resolved: "bg-sky-100 text-sky-700",
-};
-
-const STATUS_LABEL: Record<HitStatus, string> = {
-  new: "Offen",
-  reviewing: "In Prüfung",
-  confirmed: "Bestätigt",
-  dismissed: "Verworfen",
-  sent_to_lawyer: "An Anwalt",
-  resolved: "Erledigt",
-};
-
-const SOURCE_BADGE: Record<string, string> = {
-  web: "bg-sky-100 text-sky-700",
-  dpma: "bg-violet-100 text-violet-700",
-  euipo: "bg-indigo-100 text-indigo-700",
-  import: "bg-stone-100 text-stone-500",
-};
-
-interface KanbanCard {
-  id: string;
-  title: string;
-  sub: string;        // domain for web, aktenzeichen for trademarks
-  score: number | null;
-  status: HitStatus;
-  city: string | null;
-  lastSeen: string;
-  totalCount: number;
-  source: string;     // "web" | "dpma" | "euipo" | "import"
-  href: string;
-}
-
-function KanbanCardItem({ card }: { card: KanbanCard }) {
-  const sourceLabel = card.source === "dpma" ? "DPMA" : card.source === "euipo" ? "EUIPO" : card.source === "import" ? "Import" : "Web";
-  return (
-    <Link
-      href={card.href}
-      className="flex items-start gap-3 rounded-xl border border-white/60 bg-white/50 p-3 transition hover:bg-white/80 hover:shadow-sm"
-    >
-      <span className={`mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${scoreBg(card.score)}`}>
-        {card.score ?? "—"}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-start justify-between gap-1">
-          <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-stone-900">
-            {card.title}
-          </p>
-          {card.totalCount > 1 && (
-            <span className="ml-1 mt-0.5 shrink-0 rounded-full bg-stone-800/80 px-1.5 py-0.5 text-[9px] font-semibold text-white">
-              +{card.totalCount - 1}
-            </span>
-          )}
-        </div>
-        <p className="mt-0.5 truncate text-[11px] text-stone-400">{card.sub}</p>
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${SOURCE_BADGE[card.source] ?? SOURCE_BADGE.web}`}>
-            {sourceLabel}
-          </span>
-          <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${STATUS_CHIP[card.status]}`}>
-            {STATUS_LABEL[card.status]}
-          </span>
-          {card.city && <span className="text-[10px] text-stone-400">{card.city}</span>}
-          <span className="ml-auto text-[10px] text-stone-300">
-            {new Date(card.lastSeen).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })}
-          </span>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-function KanbanColumn({
-  title,
-  color,
-  cards,
-  total,
-  fullView,
-  emptyText,
-}: {
-  title: string;
-  color: string;
-  cards: KanbanCard[];
-  total: number;
-  fullView: boolean;
-  emptyText: string;
-}) {
-  // Default: max 15 cards; full view: all
-  const shown = fullView ? cards : cards.slice(0, 15);
-  const hidden = total - shown.length;
-
-  return (
-    <div className="glass flex min-h-[200px] flex-col rounded-2xl overflow-hidden">
-      <div className={`flex items-center justify-between border-b border-white/60 px-4 py-3 ${color}`}>
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold text-stone-900">{title}</h2>
-          <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] font-bold text-stone-700">{total}</span>
-        </div>
-        {!fullView && total > 0 && (
-          <Link href="/?view=all" className="text-[10px] font-medium text-stone-500 hover:text-stone-800">
-            Alle →
-          </Link>
-        )}
-      </div>
-      <div className={`flex-1 space-y-2 overflow-y-auto p-3 ${fullView ? "max-h-[calc(100vh-280px)]" : ""}`}>
-        {shown.length === 0 && (
-          <p className="px-1 py-6 text-center text-xs text-stone-400">{emptyText}</p>
-        )}
-        {shown.map((c) => <KanbanCardItem key={`${c.source}-${c.id}`} card={c} />)}
-        {!fullView && hidden > 0 && (
-          <Link
-            href="/?view=all"
-            className="block rounded-xl border border-dashed border-stone-200 py-2 text-center text-xs text-stone-400 hover:border-stone-400 hover:text-stone-600"
-          >
-            + {hidden} weitere
-          </Link>
-        )}
-      </div>
-    </div>
-  );
-}
 
 export default async function DashboardPage({
   searchParams,
@@ -295,6 +164,7 @@ export default async function DashboardPage({
     totalCount: g.totalCount,
     source: (g.primary as Hit & { ai_model?: string | null }).ai_model === "imported" ? "import" : "web",
     href: `/hits/${g.primary.id}`,
+    type: "hit" as const,
   }));
 
   // DPMA / EUIPO trademarks
@@ -309,6 +179,7 @@ export default async function DashboardPage({
     totalCount: 1,
     source: (t.quelle ?? "dpma").toLowerCase().includes("euipo") ? "euipo" : "dpma",
     href: `/trademarks/${t.id}`,
+    type: "trademark" as const,
   }));
 
   // Merge and sort by score
@@ -348,7 +219,7 @@ export default async function DashboardPage({
   const lastRun = runs[0];
 
   return (
-    <AppShell user={auth.user}>
+    <AppShell user={auth.user} role={role}>
       {lastRun?.status === "running" && (
         <RunningBanner newHits={lastRun.new_hits} startedAt={lastRun.started_at} region={lastRun.region ?? null} />
       )}
@@ -392,11 +263,10 @@ export default async function DashboardPage({
           </h2>
           {/* Source legend */}
           <div className="flex items-center gap-1.5">
-            {(["web", "dpma", "euipo", "import"] as const).map((s) => (
-              <span key={s} className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${SOURCE_BADGE[s]}`}>
-                {s === "web" ? "Web" : s === "dpma" ? "DPMA" : s === "euipo" ? "EUIPO" : "Import"}
-              </span>
-            ))}
+            <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold bg-sky-100 text-sky-700">Web</span>
+            <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold bg-violet-100 text-violet-700">DPMA</span>
+            <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold bg-indigo-100 text-indigo-700">EUIPO</span>
+            <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold bg-stone-100 text-stone-500">Import</span>
           </div>
         </div>
         {fullView ? (
@@ -411,30 +281,12 @@ export default async function DashboardPage({
       </div>
 
       {/* Kanban-Board */}
-      <section className="mt-2 grid gap-4 lg:grid-cols-3">
-        <KanbanColumn
-          title="Offen"
-          color="bg-stone-50/60"
-          cards={openCards}
-          total={openCards.length}
+      <section className="mt-2">
+        <KanbanBoard
+          initialOpen={openCards}
+          initialReview={reviewCards}
+          initialDone={doneCards}
           fullView={fullView}
-          emptyText="Keine offenen Treffer."
-        />
-        <KanbanColumn
-          title="In Bearbeitung"
-          color="bg-amber-50/60"
-          cards={reviewCards}
-          total={reviewCards.length}
-          fullView={fullView}
-          emptyText="Keine Treffer in Bearbeitung."
-        />
-        <KanbanColumn
-          title="Bearbeitet"
-          color="bg-emerald-50/40"
-          cards={doneCards}
-          total={doneCards.length}
-          fullView={fullView}
-          emptyText="Noch keine abgeschlossenen Treffer."
         />
       </section>
 
