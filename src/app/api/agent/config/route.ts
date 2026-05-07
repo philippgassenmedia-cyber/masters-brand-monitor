@@ -19,5 +19,6 @@ export async function GET(req: Request) {
     SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
     SUPABASE_SERVICE_ROLE_KEY: serviceKey,
     GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? "",
+    requiredLauncherVersion: parseInt(process.env.REQUIRED_AGENT_LAUNCHER_VERSION ?? "1"),
   });
 }

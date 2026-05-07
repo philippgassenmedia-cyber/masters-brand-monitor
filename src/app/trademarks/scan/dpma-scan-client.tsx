@@ -11,10 +11,19 @@ const PREREQS = [
   { name: "Git", url: "https://git-scm.com/download/win" },
 ];
 
+const LS_KEY = "agentLauncherVersion";
+
 function AgentCallout() {
   const [loading, setLoading] = useState(false);
   const [downloaded, setDownloaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [needsUpdate, setNeedsUpdate] = useState(false);
+
+  // Check if user has an older launcher version than required
+  useEffect(() => {
+    const stored = parseInt(localStorage.getItem(LS_KEY) ?? "0");
+    setNeedsUpdate(stored < REQUIRED_LAUNCHER_VERSION);
+  }, []);
 
   const download = async () => {
     setLoading(true);
@@ -49,6 +58,9 @@ function AgentCallout() {
       a.download = filename;
       a.click();
       URL.revokeObjectURL(url);
+      // Mark as up-to-date
+      localStorage.setItem(LS_KEY, String(REQUIRED_LAUNCHER_VERSION));
+      setNeedsUpdate(false);
       setDownloaded(true);
       setTimeout(() => setDownloaded(false), 4000);
     } catch (e) {
@@ -59,40 +71,55 @@ function AgentCallout() {
   };
 
   return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-stone-200/70 bg-white/50 px-4 py-2.5">
-      <div className="flex items-center gap-2.5 text-xs text-stone-600">
-        <span className="text-base">🤖</span>
-        <span>
-          <span className="font-semibold text-stone-800">Lokaler Agent erforderlich</span>
-          {" · "}Voraussetzungen:
-        </span>
-        {PREREQS.map((p) => (
-          <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center gap-0.5 text-stone-500 underline hover:text-stone-800">
-            {p.name}
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
-            </svg>
-          </a>
-        ))}
-        <Link href="/settings" className="text-stone-400 hover:text-stone-700">Anleitung →</Link>
-      </div>
-      <div className="flex items-center gap-2">
-        {error && <span className="text-[11px] text-rose-600">{error}</span>}
-        <button
-          onClick={download}
-          disabled={loading}
-          className="flex items-center gap-1.5 rounded-full bg-stone-900 px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-stone-800 disabled:opacity-60"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+    <div className="mb-3 flex flex-col gap-2">
+      {needsUpdate && (
+        <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50/80 px-4 py-2.5">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-amber-600">
+            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
           </svg>
-          {loading ? "Lädt…" : downloaded ? "Heruntergeladen ✓" : "Agent herunterladen"}
-        </button>
+          <span className="flex-1 text-xs text-amber-900">
+            <span className="font-semibold">Neue Agent-Version verfügbar (v{REQUIRED_LAUNCHER_VERSION}).</span>
+            {" "}Bitte die Startdatei erneut herunterladen — der Code aktualisiert sich danach automatisch.
+          </span>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-stone-200/70 bg-white/50 px-4 py-2.5">
+        <div className="flex items-center gap-2.5 text-xs text-stone-600">
+          <span className="text-base">🤖</span>
+          <span>
+            <span className="font-semibold text-stone-800">Lokaler Agent</span>
+            {" · "}Desktop-Datei einmalig herunterladen, dauerhaft auf dem Desktop belassen
+          </span>
+          {PREREQS.map((p) => (
+            <a key={p.name} href={p.url} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-0.5 text-stone-500 underline hover:text-stone-800">
+              {p.name}
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+              </svg>
+            </a>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          {error && <span className="text-[11px] text-rose-600">{error}</span>}
+          <button
+            onClick={download}
+            disabled={loading}
+            className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-xs font-semibold text-white transition disabled:opacity-60 ${needsUpdate ? "bg-amber-600 hover:bg-amber-700" : "bg-stone-900 hover:bg-stone-800"}`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            {loading ? "Lädt…" : downloaded ? "Heruntergeladen ✓" : needsUpdate ? "Update herunterladen" : "Agent herunterladen"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
+
+// Bump this constant to force all users to re-download their launcher script
+const REQUIRED_LAUNCHER_VERSION = 1;
 
 function buildWindowsScript(appUrl: string, agentToken: string, repo: string, config: Record<string, string>): string {
   const { NEXT_PUBLIC_SUPABASE_URL: sbUrl, SUPABASE_SERVICE_ROLE_KEY: sbKey, GEMINI_API_KEY: gemKey } = config;
@@ -101,12 +128,13 @@ chcp 65001 >nul
 title DPMA Register-Agent
 echo.
 echo ========================================
-echo   DPMA Register-Agent
+echo   DPMA Register-Agent  (v${REQUIRED_LAUNCHER_VERSION})
 echo ========================================
 echo.
 
 set "APP_URL=${appUrl}"
 set "AGENT_TOKEN=${agentToken}"
+set "LAUNCHER_VER=${REQUIRED_LAUNCHER_VERSION}"
 
 where node >nul 2>&1
 if %errorlevel% equ 0 goto :node_ok
@@ -170,8 +198,9 @@ function buildMacScript(appUrl: string, agentToken: string, repo: string, config
   return `#!/bin/bash
 APP_URL="${appUrl}"
 AGENT_TOKEN="${agentToken}"
+export LAUNCHER_VER=${REQUIRED_LAUNCHER_VERSION}
 
-echo ""; echo "========================================"; echo "  DPMA Register-Agent"; echo "========================================"
+echo ""; echo "========================================"; echo "  DPMA Register-Agent  (v${REQUIRED_LAUNCHER_VERSION})"; echo "========================================"
 
 if ! command -v node &>/dev/null; then echo "[FEHLER] Node.js nicht gefunden. Von https://nodejs.org installieren."; read -p "Enter..."; exit 1; fi
 echo "[OK] Node.js $(node --version)"

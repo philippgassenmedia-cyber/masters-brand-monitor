@@ -525,6 +525,26 @@ async function poll() {
   const {error} = await db.from("scheduled_scans").select("id").limit(1);
   if(error){console.error("❌ Supabase-Fehler:",error.message);process.exit(1);}
 
+  // Version check — warn if launcher script is outdated
+  const launcherVer = parseInt(process.env.LAUNCHER_VER ?? "0");
+  if (launcherVer > 0) {
+    try {
+      const appUrl = process.env.APP_URL;
+      const agentToken = process.env.AGENT_TOKEN;
+      if (appUrl && agentToken) {
+        const vRes = await fetch(`${appUrl}/api/agent/config?token=${agentToken}`, {signal: AbortSignal.timeout(5000)}).catch(()=>null);
+        const vData = vRes?.ok ? await vRes.json().catch(()=>({})) : {};
+        const required = parseInt(vData?.requiredLauncherVersion ?? "1");
+        if (launcherVer < required) {
+          console.warn(`\n⚠️  ════════════════════════════════════════════════`);
+          console.warn(`⚠️  NEUER AGENT VERFÜGBAR (v${required}, du hast v${launcherVer})`);
+          console.warn(`⚠️  Bitte Startdatei erneut von ${appUrl}/scan herunterladen.`);
+          console.warn(`⚠️  ════════════════════════════════════════════════\n`);
+        }
+      }
+    } catch { /* version check is best-effort */ }
+  }
+
   // Expire stale pending jobs (older than 2 hours) so they are never picked up
   const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
   const {count} = await db.from("scheduled_scans")
