@@ -53,18 +53,34 @@ function formatDuration(ms: number): string {
   return `${Math.floor(sec / 60)}m ${(sec % 60).toString().padStart(2, "0")}s`;
 }
 
-export function ScanClient() {
+export function ScanClient({
+  defaultRegion,
+  defaultMode,
+  hideControls,
+}: {
+  defaultRegion?: SearchRegion;
+  defaultMode?: ScanMode;
+  hideControls?: boolean;
+} = {}) {
   const isMobile = useIsMobile();
   if (isMobile) return <MobileWebScan />;
-  return <ScanClientDesktop />;
+  return <ScanClientDesktop defaultRegion={defaultRegion} defaultMode={defaultMode} hideControls={hideControls} />;
 }
 
-function ScanClientDesktop() {
+function ScanClientDesktop({
+  defaultRegion = "deutschland",
+  defaultMode = "quick",
+  hideControls = false,
+}: {
+  defaultRegion?: SearchRegion;
+  defaultMode?: ScanMode;
+  hideControls?: boolean;
+}) {
   const { state, startScan, stopScan } = useScan();
 
   // Local UI state only
-  const [region, setRegion] = useState<SearchRegion>("deutschland");
-  const [mode, setMode] = useState<ScanMode>("quick");
+  const [region, setRegion] = useState<SearchRegion>(defaultRegion);
+  const [mode, setMode] = useState<ScanMode>(defaultMode);
   const [freeText, setFreeText] = useState("");
   const [now, setNow] = useState(Date.now());
   const [showSuccess, setShowSuccess] = useState(false);
@@ -140,8 +156,8 @@ function ScanClientDesktop() {
         </Link>
       </header>
 
-      {/* Controls — hide while a web scan is active */}
-      {!isWebScan || phase === "idle" ? (
+      {/* Controls — hide while a web scan is active, or when locked to defaults */}
+      {(!hideControls) && (!isWebScan || phase === "idle") ? (
         <section className="glass mb-3 p-3 md:p-5">
           <div className="flex flex-col gap-3">
             <div className="grid gap-3 sm:grid-cols-3">

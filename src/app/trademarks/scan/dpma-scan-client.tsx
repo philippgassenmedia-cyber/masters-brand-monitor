@@ -247,17 +247,29 @@ function formatDuration(ms: number): string {
 }
 
 const DEFAULT_KLASSEN = new Set([36, 37, 42]);
-type ScanSource = "dpma" | "euipo" | "both";
+type ScanSource = "dpma" | "euipo" | "hr" | "all";
 
-export function DpmaScanClient() {
+export function DpmaScanClient({
+  defaultSource,
+  hideFilters,
+}: {
+  defaultSource?: ScanSource;
+  hideFilters?: boolean;
+} = {}) {
   const isMobile = useIsMobile();
   if (isMobile) return <MobileDpmaScan />;
-  return <DpmaScanClientDesktop />;
+  return <DpmaScanClientDesktop defaultSource={defaultSource} hideFilters={hideFilters} />;
 }
 
-function DpmaScanClientDesktop() {
+function DpmaScanClientDesktop({
+  defaultSource = "dpma",
+  hideFilters = false,
+}: {
+  defaultSource?: ScanSource;
+  hideFilters?: boolean;
+}) {
   // Local UI state
-  const [source, setSource] = useState<ScanSource>("dpma");
+  const [source, setSource] = useState<ScanSource>(defaultSource);
   const [nurDE, setNurDE] = useState(true);
   const [nurInKraft, setNurInKraft] = useState(true);
   const [selectedKlassen, setSelectedKlassen] = useState<Set<number>>(DEFAULT_KLASSEN);
@@ -452,13 +464,13 @@ function DpmaScanClientDesktop() {
   }, [stopPoll, runPoll]);
 
   const start = () => {
-    if (source === "euipo") {
-      startAgentScan(klassenString, "euipo");
-    } else if (source === "both") {
-      startAgentScan(klassenString, "all");
-    } else {
-      startAgentScan(klassenString, "dpma");
-    }
+    const typeMap: Record<ScanSource, string> = {
+      dpma: "dpma",
+      euipo: "euipo",
+      hr: "handelsregister",
+      all: "all",
+    };
+    startAgentScan(klassenString, typeMap[source] as never);
   };
 
   const stop = () => stopAgentScan();
@@ -470,17 +482,25 @@ function DpmaScanClientDesktop() {
   const isActive = agentScan.phase !== "idle";
   const running = agentScan.phase === "pending" || agentScan.phase === "running";
   const elapsed = agentScan.startedAt ? now - agentScan.startedAt : 0;
-  const isFiltersHidden = isActive;
+  const isFiltersHidden = isActive || hideFilters;
   const totalNew = agentScan.hits.length;
 
   // Status text
-  const registerLabel = source === "dpma" ? "DPMA-Register" : source === "euipo" ? "EUIPO-Register" : "DPMA + EUIPO";
+  const REGISTER_LABELS: Record<ScanSource, string> = {
+    dpma: "DPMA-Register",
+    euipo: "EUIPO-Register",
+    hr: "Handelsregister",
+    all: "DPMA + EUIPO + HR",
+  };
+  const registerLabel = REGISTER_LABELS[source];
+  const SOURCE_SUB: Record<ScanSource, string> = {
+    dpma: "Sucht direkt im DPMA-Register — lokaler Agent erforderlich",
+    euipo: "Sucht direkt im EUIPO-Register — lokaler Agent erforderlich",
+    hr: "Sucht im Handelsregister (HR) — lokaler Agent erforderlich",
+    all: "DPMA + EUIPO + Handelsregister via lokalem Agenten",
+  };
   let statusTitle = "Bereit";
-  let statusSub = source === "dpma"
-    ? "Sucht direkt im DPMA-Register — lokaler Agent erforderlich"
-    : source === "euipo"
-    ? "Sucht direkt im EUIPO-Register — lokaler Agent erforderlich"
-    : "DPMA + EUIPO via lokalem Agenten";
+  let statusSub = SOURCE_SUB[source];
 
   if (agentScan.phase === "pending") {
     statusTitle = "Warte auf lokalen Agenten…";
@@ -520,13 +540,14 @@ function DpmaScanClientDesktop() {
               {([
                 { value: "dpma" as ScanSource, label: "DPMA (DE)" },
                 { value: "euipo" as ScanSource, label: "EUIPO (EU)" },
-                { value: "both" as ScanSource, label: "Beide" },
+                { value: "hr" as ScanSource, label: "HR (DE)" },
+                { value: "all" as ScanSource, label: "Alle" },
               ]).map((opt) => (
                 <button
                   key={opt.value}
                   type="button"
                   onClick={() => setSource(opt.value)}
-                  className={`rounded-full px-5 py-2 text-xs font-semibold transition ${
+                  className={`rounded-full px-4 py-2 text-xs font-semibold transition ${
                     source === opt.value
                       ? "bg-stone-900 text-white shadow"
                       : "text-stone-600 hover:text-stone-900"
@@ -537,8 +558,8 @@ function DpmaScanClientDesktop() {
               ))}
             </div>
             <span className="ml-3 text-[11px] text-stone-400">
-              {source === "both"
-                ? "DPMA + EUIPO nacheinander via lokalem Agenten"
+              {source === "all"
+                ? "DPMA + EUIPO + Handelsregister via lokalem Agenten"
                 : "Echter Register-Zugriff via lokalem Playwright-Agenten"}
             </span>
           </div>
@@ -655,8 +676,8 @@ function DpmaScanClientDesktop() {
         </section>
       )}
 
-      {/* Agent-Download-Callout — nur im Idle-Zustand und bei DPMA-Quelle */}
-      {!isFiltersHidden && source !== "euipo" && <AgentCallout />}
+      {/* Agent-Download-Callout — nur im Idle-Zustand */}
+      {!isFiltersHidden && <AgentCallout />}
 
       {/* Start / Status */}
       <section className="glass mb-3 px-5 py-4">
@@ -693,7 +714,7 @@ function DpmaScanClientDesktop() {
                 onClick={start}
                 className="h-10 rounded-full bg-stone-900 px-6 text-xs font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] hover:bg-stone-800"
               >
-                {source === "dpma" ? "DPMA durchsuchen" : source === "euipo" ? "EUIPO durchsuchen" : "DPMA + EUIPO durchsuchen"}
+                {{ dpma: "DPMA durchsuchen", euipo: "EUIPO durchsuchen", hr: "HR durchsuchen", all: "Alle Register durchsuchen" }[source]}
               </button>
             ) : running || agentScan.phase === "pending" ? (
               <button

@@ -16,15 +16,22 @@ const SCAN_TYPES: { value: ScanType; label: string; sub: string; icon: string }[
   {
     value: "register",
     label: "Register-Scan",
-    sub: "Durchsucht DPMA + EUIPO Markenregister via lokalem Agenten",
+    sub: "Durchsucht DPMA · EUIPO · Handelsregister via lokalem Agenten",
     icon: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
   },
   {
     value: "all",
     label: "Alles scannen",
-    sub: "Web-Scan + Register-Scan in einer Ansicht starten",
+    sub: "Web (DE·Quick) + DPMA + EUIPO + HR — alles vorkonfiguriert",
     icon: "M21 21l-4.3-4.3 M11 19a8 8 0 100-16 8 8 0 000 16z",
   },
+];
+
+const ALL_SCAN_CHIPS = [
+  { label: "Web · Deutschland · Quick", color: "bg-sky-100 text-sky-800" },
+  { label: "DPMA-Register", color: "bg-violet-100 text-violet-800" },
+  { label: "EUIPO-Register", color: "bg-blue-100 text-blue-800" },
+  { label: "Handelsregister (HR)", color: "bg-amber-100 text-amber-800" },
 ];
 
 export function UnifiedScanClient() {
@@ -32,10 +39,8 @@ export function UnifiedScanClient() {
 
   return (
     <div className="flex min-h-0 flex-col gap-4">
-      {/* Header + type selector */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold text-stone-900">Scan</h1>
-      </div>
+      {/* Header */}
+      <h1 className="text-2xl font-semibold text-stone-900">Scan</h1>
 
       {/* Type selection cards */}
       <div className="grid gap-3 sm:grid-cols-3">
@@ -75,29 +80,37 @@ export function UnifiedScanClient() {
       </div>
 
       {/* Scan panels */}
-      {scanType === "web" && (
-        <ScanClient />
-      )}
+      {scanType === "web" && <ScanClient />}
 
-      {scanType === "register" && (
-        <DpmaScanClient />
-      )}
+      {scanType === "register" && <DpmaScanClient />}
 
       {scanType === "all" && (
-        <div className="grid gap-6 xl:grid-cols-2">
-          <div className="flex min-h-0 flex-col">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="rounded-full bg-sky-100 px-2.5 py-0.5 text-[10px] font-semibold text-sky-700">Web</span>
-              <span className="text-xs text-stone-500">Direkt · kein Agent nötig</span>
-            </div>
-            <ScanClient />
+        <div className="flex min-h-0 flex-col gap-4">
+          {/* Pre-configured summary */}
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-stone-200/60 bg-stone-50/60 px-4 py-3">
+            <span className="mr-1 text-[11px] font-semibold text-stone-500 uppercase tracking-wide">Wird gescannt:</span>
+            {ALL_SCAN_CHIPS.map((c) => (
+              <span key={c.label} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${c.color}`}>
+                {c.label}
+              </span>
+            ))}
           </div>
-          <div className="flex min-h-0 flex-col">
-            <div className="mb-3 flex items-center gap-2">
-              <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-[10px] font-semibold text-violet-700">Register</span>
-              <span className="text-xs text-stone-500">DPMA + EUIPO · lokaler Agent</span>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            <div className="flex min-h-0 flex-col">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="rounded-full bg-sky-100 px-2.5 py-0.5 text-[10px] font-semibold text-sky-700">Web</span>
+                <span className="text-xs text-stone-500">Deutschland · Quick · kein Agent nötig</span>
+              </div>
+              <ScanClient hideControls defaultRegion="deutschland" defaultMode="quick" />
             </div>
-            <DpmaScanClient />
+            <div className="flex min-h-0 flex-col">
+              <div className="mb-3 flex items-center gap-2">
+                <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-[10px] font-semibold text-violet-700">Register</span>
+                <span className="text-xs text-stone-500">DPMA + EUIPO + HR · lokaler Agent</span>
+              </div>
+              <DpmaScanClient hideFilters defaultSource="all" />
+            </div>
           </div>
         </div>
       )}
