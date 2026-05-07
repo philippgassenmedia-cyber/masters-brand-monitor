@@ -376,54 +376,70 @@ async function runHandelsregisterScan(scanId: string) {
       }
       if (!loaded) { console.log(`   ⚠️ Seite nicht erreichbar`); totalErrors++; continue; }
 
-      // Accept cookie consent if present
+      // Accept cookie consent — HR uses JSF, try button/link/JS-click + form submit
       try {
-        const consent = page.locator('button:has-text("Akzeptieren"), button:has-text("Alle akzeptieren"), button:has-text("Ich stimme zu"), button:has-text("Accept")');
-        await consent.first().click({timeout:3000});
-        await page.waitForTimeout(1000);
+        // Try visible buttons and links with various texts
+        let accepted = false;
+        for (const sel of [
+          'button:has-text("Akzeptieren")', 'a:has-text("Akzeptieren")',
+          'button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")',
+          'a:has-text("Zustimmen")', 'button:has-text("OK")', 'a:has-text("OK")',
+          'input[type="submit"][value*="kzept"]', 'input[type="submit"][value*="OK"]',
+        ]) {
+          try { await page.locator(sel).first().click({timeout:2000}); accepted = true; break; } catch {}
+        }
+        // Fallback: JS click on any element whose text matches
+        if (!accepted) {
+          await page.evaluate(() => {
+            const el = Array.from(document.querySelectorAll('button, a, input[type="submit"]'))
+              .find(e => /akzept|zustimm|einverstanden|weiter|ok/i.test(e.textContent ?? (e as HTMLInputElement).value ?? ''));
+            if (el) (el as HTMLElement).click();
+          });
+        }
+        await page.waitForTimeout(1500);
       } catch {}
-      // Wait for search form — try multiple known selectors across redesigns
+
+      // Navigate directly to the search page (JSF app — welcome.xhtml ≠ search page)
+      await page.goto("https://www.handelsregister.de/rp_web/search.xhtml", {timeout:30000});
+      await page.waitForTimeout(2000);
+      console.log(`   ℹ️ Suchseite geladen: ${page.url()}`);
+
+      // Wait for a visible text input (not hidden JSF state fields)
       const INPUT_SELECTORS = [
-        'input[name="stichwort"]',
-        'input[name="schlagwoerter"]',
-        'input[id*="stichwort"]',
-        'input[id*="schlagwort"]',
-        'input[id*="schlagwoerter"]',
-        'input[name*="schlagwort"]',
-        'input[id*="terms"]',
-        'input[name="terms"]',
-        'input[placeholder*="tichwort"]',
-        'input[placeholder*="uche"]',
+        'input[id*="schlagwoerter"]:not([type="hidden"])',
+        'input[id*="stichwort"]:not([type="hidden"])',
+        'input[id*="schlagwort"]:not([type="hidden"])',
+        'input[name*="schlagwort"]:not([type="hidden"])',
+        'input[type="text"]',
+        'input:not([type="hidden"]):not([type="submit"]):not([type="checkbox"]):not([type="radio"])',
       ];
       const SUBMIT_SELECTORS = [
         'input[type="submit"][value*="Suchen"]',
         'input[type="submit"][value*="suchen"]',
         'button[type="submit"]:has-text("Suchen")',
         'button:has-text("Suchen")',
-        'input[name*="suchen"]',
-        'input[name*="Suchen"]',
         'button[id*="uche"]',
         'input[type="submit"]',
       ];
+
       let foundInput = false;
       for (const sel of INPUT_SELECTORS) {
-        try { await page.waitForSelector(sel, {timeout:3000}); foundInput = true; break; } catch { /* next */ }
+        try { await page.waitForSelector(sel, {timeout:4000}); foundInput = true; break; } catch {}
       }
       if (!foundInput) {
-        // Debug: show what inputs exist on page
-        const allInputs = await page.$$eval('input', els => els.map(e => `${e.tagName}[name="${e.getAttribute('name')}" id="${e.getAttribute('id')}" type="${e.getAttribute('type')}"]`));
+        const allInputs = await page.$$eval('input', els => els.map(e => `INPUT[name="${e.name}" id="${e.id}" type="${e.type}"]`));
         console.log(`   ⚠️ Kein Suchformular gefunden. URL: ${page.url()}`);
-        console.log(`   🔍 Gefundene Inputs: ${allInputs.slice(0,8).join(' | ') || '(keine)'}`);
+        console.log(`   🔍 Inputs: ${allInputs.slice(0,10).join(' | ') || '(keine)'}`);
         totalErrors++;
         continue;
       }
       // Fill search term
       const searchInput = page.locator(INPUT_SELECTORS.join(', '));
       await searchInput.first().fill(stem);
-      // Submit — try each selector
+      // Submit
       let clicked = false;
       for (const sel of SUBMIT_SELECTORS) {
-        try { await page.locator(sel).first().click({timeout:2000}); clicked = true; break; } catch { /* next */ }
+        try { await page.locator(sel).first().click({timeout:2000}); clicked = true; break; } catch {}
       }
       if (!clicked) { console.log(`   ⚠️ Submit-Button nicht gefunden`); totalErrors++; continue; }
       await page.waitForLoadState("networkidle",{timeout:30000});
