@@ -66,6 +66,33 @@ export function ExportsClient({
 
   return (
     <div>
+      {/* ── Gesamtexport ── */}
+      <section className="glass mb-8 p-6">
+        <h2 className="mb-1 text-lg font-semibold text-stone-900">
+          Gesamtexport — Alle Treffer &amp; Marken
+        </h2>
+        <p className="mb-5 text-sm text-stone-500">
+          Exportiert alle Web-Treffer, DPMA/EUIPO-Registereinträge und zugehörige Notizen.
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <a
+            href="/api/export/history?format=csv"
+            download
+            className="flex h-10 items-center rounded-full bg-stone-900 px-5 text-xs font-semibold text-white shadow-[0_4px_16px_rgba(68,64,60,0.2)] hover:bg-stone-800"
+          >
+            CSV herunterladen
+          </a>
+          <a
+            href="/exports/history/print"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex h-10 items-center rounded-full border border-white/80 bg-white/60 px-5 text-xs font-semibold text-stone-700 hover:bg-white/90"
+          >
+            Als PDF drucken
+          </a>
+        </div>
+      </section>
+
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold text-stone-900">Anwalts-Exporte</h1>
