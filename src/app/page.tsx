@@ -218,9 +218,14 @@ export default async function DashboardPage({
   const runs = (runsRes.data ?? []) as ScanRun[];
   const lastRun = runs[0];
 
+  // Only show banner if scan started within the last 2 hours (guards against stuck DB records)
+  const scanIsActive =
+    lastRun?.status === "running" &&
+    Date.now() - new Date(lastRun.started_at).getTime() < 2 * 60 * 60 * 1000;
+
   return (
     <AppShell user={auth.user} role={role}>
-      {lastRun?.status === "running" && (
+      {scanIsActive && (
         <RunningBanner newHits={lastRun.new_hits} startedAt={lastRun.started_at} region={lastRun.region ?? null} />
       )}
 

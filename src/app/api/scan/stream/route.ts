@@ -337,6 +337,14 @@ export async function POST(req: Request) {
         }
       } finally {
         clearInterval(keepalive);
+        // If stream is closed unexpectedly (browser disconnect etc.), mark run as interrupted
+        if (runId) {
+          await db
+            .from("scan_runs")
+            .update({ finished_at: new Date().toISOString(), status: "partial" })
+            .eq("id", runId)
+            .eq("status", "running"); // only update if still stuck in running
+        }
         controller.close();
       }
     },
