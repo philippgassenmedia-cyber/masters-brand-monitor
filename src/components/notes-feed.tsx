@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 interface Note {
   id: string;
@@ -8,6 +9,17 @@ interface Note {
   created_by: string | null;
   created_at: string;
 }
+
+type Status = "new" | "reviewing" | "confirmed" | "dismissed" | "sent_to_lawyer" | "resolved";
+
+const STATUS_OPTIONS: { value: Status; label: string; base: string; active: string }[] = [
+  { value: "new",            label: "Offen",      base: "bg-stone-100 text-stone-600 hover:bg-stone-200",     active: "bg-stone-800 text-white" },
+  { value: "reviewing",      label: "In Prüfung", base: "bg-amber-100 text-amber-700 hover:bg-amber-200",     active: "bg-amber-500 text-white" },
+  { value: "confirmed",      label: "Bestätigt",  base: "bg-rose-100 text-rose-700 hover:bg-rose-200",        active: "bg-rose-600 text-white" },
+  { value: "dismissed",      label: "Verworfen",  base: "bg-emerald-100 text-emerald-700 hover:bg-emerald-200", active: "bg-emerald-600 text-white" },
+  { value: "sent_to_lawyer", label: "An Anwalt",  base: "bg-purple-100 text-purple-700 hover:bg-purple-200",  active: "bg-purple-600 text-white" },
+  { value: "resolved",       label: "Erledigt",   base: "bg-sky-100 text-sky-700 hover:bg-sky-200",           active: "bg-sky-600 text-white" },
+];
 
 function relTime(iso: string): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
@@ -22,13 +34,23 @@ function initials(email: string | null): string {
   return email.slice(0, 2).toUpperCase();
 }
 
-export function NotesFeed({ notesUrl }: { notesUrl: string }) {
+interface NotesFeedProps {
+  notesUrl: string;
+  /** If provided, shows quick-status chips and auto-sets status on note submit */
+  statusUrl?: string;
+  currentStatus?: Status;
+}
+
+export function NotesFeed({ notesUrl, statusUrl, currentStatus }: NotesFeedProps) {
   const [notes, setNotes] = useState<Note[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [status, setStatus] = useState<Status>(currentStatus ?? "new");
+  const [statusSaving, setStatusSaving] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   const load = useCallback(async () => {
     try {
@@ -48,6 +70,27 @@ export function NotesFeed({ notesUrl }: { notesUrl: string }) {
     if (loaded) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [notes, loaded]);
 
+  const patchStatus = useCallback(async (newStatus: Status) => {
+    if (!statusUrl) return;
+    setStatusSaving(true);
+    try {
+      await fetch(statusUrl, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+      setStatus(newStatus);
+      router.refresh();
+    } finally {
+      setStatusSaving(false);
+    }
+  }, [statusUrl, router]);
+
+  const handleStatusClick = (newStatus: Status) => {
+    if (newStatus === status || statusSaving) return;
+    patchStatus(newStatus);
+  };
+
   const send = async () => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
@@ -63,6 +106,11 @@ export function NotesFeed({ notesUrl }: { notesUrl: string }) {
       const data = await res.json();
       setNotes((p) => [...p, data.note]);
       setText("");
+
+      // Auto-advance to "reviewing" when the first note is added on a new hit
+      if (statusUrl && status === "new") {
+        await patchStatus("reviewing");
+      }
     } catch {
       setError("Netzwerkfehler.");
     } finally {
@@ -76,7 +124,7 @@ export function NotesFeed({ notesUrl }: { notesUrl: string }) {
 
   return (
     <section className="glass p-6">
-      <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wider text-stone-500">
         Status-Feed
         {notes.length > 0 && (
           <span className="ml-2 rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-500 normal-case">
@@ -85,8 +133,27 @@ export function NotesFeed({ notesUrl }: { notesUrl: string }) {
         )}
       </h2>
 
+      {/* Quick status chips */}
+      {statusUrl && (
+        <div className="mb-4 flex flex-wrap gap-1.5">
+          {STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => handleStatusClick(opt.value)}
+              disabled={statusSaving}
+              className={`rounded-full px-3 py-1 text-[11px] font-semibold transition disabled:opacity-50 ${
+                status === opt.value ? opt.active : opt.base
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Timeline */}
       <div className="mb-4 max-h-72 space-y-3 overflow-y-auto">
-        {!loaded && <p className="text-xs text-stone-400">Lade Notizen…</p>}
+        {!loaded && <p className="text-xs text-stone-400">Lade Einträge…</p>}
         {loaded && notes.length === 0 && (
           <p className="text-xs text-stone-400">Noch keine Einträge. Schreibe den ersten Status-Update.</p>
         )}
@@ -107,6 +174,7 @@ export function NotesFeed({ notesUrl }: { notesUrl: string }) {
         <div ref={bottomRef} />
       </div>
 
+      {/* Input */}
       <div className="border-t border-white/60 pt-4">
         <textarea
           rows={3}
