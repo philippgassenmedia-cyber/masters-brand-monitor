@@ -4,6 +4,7 @@ import { z } from "zod";
 
 const PatchSchema = z.object({
   workflow_status: z.enum(["new", "reviewing", "confirmed", "dismissed", "sent_to_lawyer", "resolved"]).optional(),
+  notes: z.string().max(5000).optional(),
 });
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {

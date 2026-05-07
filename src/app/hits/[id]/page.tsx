@@ -7,7 +7,7 @@ import { canonicalKey, resolveCompany } from "@/lib/dedupe";
 import type { Hit } from "@/lib/types";
 import { FeedbackForm } from "@/components/feedback-form";
 import { StatusForm } from "./status-form";
-import { HitNotesFeed } from "@/components/hit-notes-feed";
+import { NotesFeed } from "@/components/notes-feed";
 
 export const dynamic = "force-dynamic";
 
@@ -197,7 +197,7 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
 
           {/* ── Right column: action panels (sticky on XL) ── */}
           <div className="space-y-5 xl:sticky xl:top-3">
-            <HitNotesFeed hitId={hit.id} />
+            <NotesFeed notesUrl={`/api/hits/${hit.id}/notes`} />
 
             <section className="glass p-6">
               <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-stone-500">Workflow</h2>
