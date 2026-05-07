@@ -95,6 +95,95 @@ const DEFAULT_DPMA_SEARCH: DpmaSearchData = {
   zeitraum_monate: 3,
 };
 
+// ── User Management ─────────────────────────────────────────────────────────
+
+interface UserRow {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: string;
+  approved: boolean;
+  created_at: string;
+  last_sign_in_at: string | null;
+}
+
+function UserManagement() {
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/users")
+      .then((r) => r.json())
+      .then((d) => { setUsers(d.users ?? []); setLoaded(true); })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const updateRole = async (userId: string, role: string) => {
+    setSaving(userId); setMsg(null);
+    try {
+      const r = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, role }),
+      });
+      if (!r.ok) throw new Error("Fehler beim Speichern");
+      setUsers((prev) => prev.map((u) => u.id === userId ? { ...u, role } : u));
+      setMsg("Rolle gespeichert.");
+      setTimeout(() => setMsg(null), 2000);
+    } catch (e) { setMsg((e as Error).message); }
+    finally { setSaving(null); }
+  };
+
+  return (
+    <section className="glass overflow-hidden">
+      <div className="flex items-center justify-between border-b border-white/60 px-5 py-4">
+        <div>
+          <h2 className="text-sm font-semibold text-stone-900">Benutzer & Rollen</h2>
+          <p className="mt-0.5 text-[11px] text-stone-500">Zugriffsrollen für alle angemeldeten Nutzer verwalten.</p>
+        </div>
+        {msg && <span className="text-xs text-emerald-700">{msg}</span>}
+      </div>
+      {!loaded ? (
+        <div className="px-5 py-8 text-center text-sm text-stone-400">Lade Benutzer…</div>
+      ) : users.length === 0 ? (
+        <div className="px-5 py-8 text-center text-sm text-stone-400">Keine Benutzer gefunden.</div>
+      ) : (
+        <div className="divide-y divide-white/50">
+          {users.map((u) => (
+            <div key={u.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-stone-800 text-sm font-bold text-white">
+                {(u.email ?? "?").slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-medium text-stone-900">{u.display_name || u.email}</div>
+                <div className="truncate text-[11px] text-stone-400">{u.email}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-stone-400">
+                  Zuletzt: {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleDateString("de-DE") : "—"}
+                </span>
+                <select
+                  value={u.role}
+                  disabled={saving === u.id}
+                  onChange={(e) => updateRole(u.id, e.target.value)}
+                  className="h-8 rounded-full border border-white/80 bg-white/60 px-3 text-xs font-semibold text-stone-700 outline-none transition hover:bg-white/90 focus:border-stone-400 disabled:opacity-50"
+                >
+                  <option value="lawyer">Anwalt (Vollzugriff)</option>
+                  <option value="viewer">Betrachter (Nur-Lese)</option>
+                </select>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ── Main settings component ──────────────────────────────────────────────────
+
 export function SettingsClient({
   initialSettings,
   userEmail,
@@ -512,6 +601,9 @@ export function SettingsClient({
           {pending ? "Speichere…" : "Einstellungen speichern"}
         </button>
       </div>
+
+      {/* Benutzer & Rollen */}
+      <UserManagement />
 
       <AdminConsoleGate />
     </div>

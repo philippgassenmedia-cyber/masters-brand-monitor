@@ -5,8 +5,9 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { UsageRing } from "./usage-ring";
 import { useScan } from "./scan-context";
+import type { UserRole } from "@/lib/auth/get-role";
 
-const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
+const NAV: Array<{ href: string; label: string; icon: ReactNode; lawyerOnly?: boolean }> = [
   {
     href: "/",
     label: "Dashboard",
@@ -22,6 +23,7 @@ const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
   {
     href: "/scan",
     label: "Live-Scan",
+    lawyerOnly: true,
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="11" cy="11" r="7" />
@@ -41,6 +43,7 @@ const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
   {
     href: "/excluded",
     label: "Eigene Domains",
+    lawyerOnly: true,
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M20 7l-9 9-5-5" />
@@ -51,6 +54,7 @@ const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
   {
     href: "/hits/import",
     label: "Import",
+    lawyerOnly: true,
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -62,6 +66,7 @@ const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
   {
     href: "/exports",
     label: "Anwalts-Export",
+    lawyerOnly: true,
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -73,6 +78,7 @@ const NAV: Array<{ href: string; label: string; icon: ReactNode }> = [
   {
     href: "/settings",
     label: "Einstellungen",
+    lawyerOnly: true,
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3" />
@@ -96,16 +102,19 @@ export function Sidebar({
   usageLimit = 200,
   usageBreakdown = {},
   buildSha = "—",
+  role = "lawyer",
 }: {
   userEmail?: string | null;
   usageCount?: number;
   usageLimit?: number;
   usageBreakdown?: Record<string, number>;
   buildSha?: string;
+  role?: UserRole;
 }) {
   const pathname = usePathname();
   const initial = (userEmail ?? "U").slice(0, 1).toUpperCase();
   const { state: scan, stopScan } = useScan();
+  const visibleNav = role === "viewer" ? NAV.filter((n) => !n.lawyerOnly) : NAV;
 
   const scanActive = scan.phase !== "idle";
   const scanRunning = scan.running;
@@ -119,19 +128,24 @@ export function Sidebar({
         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-stone-900 text-lg font-black text-white shadow-sm">
           M
         </div>
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-stone-900">Brand Monitor</div>
           <div className="text-[10px] uppercase tracking-wide text-stone-500">
             Master Immobilien
           </div>
         </div>
+        {role === "viewer" && (
+          <span className="shrink-0 rounded-full bg-stone-100 px-2 py-0.5 text-[9px] font-semibold text-stone-500">
+            Betrachter
+          </span>
+        )}
       </div>
 
       <nav className="space-y-1">
         <div className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-wider text-stone-500">
           Navigation
         </div>
-        {NAV.map((item) => {
+        {visibleNav.map((item) => {
           const active =
             item.href === "/"
               ? pathname === "/"

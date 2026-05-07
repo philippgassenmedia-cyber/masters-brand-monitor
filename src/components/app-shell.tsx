@@ -2,13 +2,16 @@ import type { ReactNode } from "react";
 import { Sidebar } from "./sidebar";
 import { MobileShell } from "./mobile-shell";
 import { getGeminiUsageToday } from "@/lib/gemini-usage";
+import type { UserRole } from "@/lib/auth/get-role";
 
 export async function AppShell({
   children,
   user,
+  role = "lawyer",
 }: {
   children: ReactNode;
   user?: { email?: string | null } | null;
+  role?: UserRole;
 }) {
   const usage = await Promise.race([
     getGeminiUsageToday(),
@@ -24,6 +27,7 @@ export async function AppShell({
       usageLimit={usage.limit}
       usageBreakdown={usage.breakdown}
       buildSha={process.env.BUILD_SHA ?? "—"}
+      role={role}
     />
   );
 

@@ -8,6 +8,8 @@ import { groupHits, resolveCompany } from "@/lib/dedupe";
 import { RunningBanner } from "@/components/running-banner";
 import { EnrichHitsButton } from "@/components/enrich-hits-button";
 import { AgentDownloadButton } from "@/components/agent-download-button";
+import { ViewerDashboard } from "@/components/viewer-dashboard";
+import { getUserRole } from "@/lib/auth/get-role";
 import type { Hit, HitStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -194,6 +196,64 @@ export default async function DashboardPage({
   const supabase = await getSupabaseServerClient();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) redirect("/login");
+
+  const role = await getUserRole();
+
+  // ── Viewer mode: simplified mobile-first dashboard ───────────────────────
+  if (role === "viewer") {
+    const [hitsRes, runsRes, tmRes] = await Promise.all([
+      supabase.from("hits").select("id, domain, title, company_name, address, subject_company_address, ai_score, status, last_seen_at, url, ai_model").order("ai_score", { ascending: false, nullsFirst: false }).limit(500),
+      supabase.from("scan_runs").select("started_at").order("started_at", { ascending: false }).limit(1),
+      supabase.from("trademarks").select("id, markenname, aktenzeichen, relevance_score, workflow_status, quelle, created_at").order("relevance_score", { ascending: false, nullsFirst: false }).limit(200),
+    ]);
+    const rawHits = (hitsRes.data ?? []) as Hit[];
+    const groups = groupHits(rawHits);
+
+    const toViewerCard = (g: ReturnType<typeof groupHits>[number]) => ({
+      id: g.primary.id,
+      title: resolveCompany(g.primary) ?? g.primary.domain,
+      domain: g.primary.domain,
+      score: g.maxScore,
+      status: g.primary.status,
+      city: extractCity(g.primary.address ?? g.primary.subject_company_address),
+      lastSeen: g.primary.last_seen_at,
+      source: (g.primary as Hit & { ai_model?: string | null }).ai_model === "imported" ? "import" : "web",
+      href: `/hits/${g.primary.id}`,
+    });
+
+    const urgent = groups.filter((g) => (g.maxScore ?? 0) >= 7 && g.primary.status === "new").map(toViewerCard);
+    const inReview = groups.filter((g) => g.primary.status === "reviewing").map(toViewerCard);
+    const allHits = groups;
+    const done = allHits.filter((g) => ["confirmed","dismissed","sent_to_lawyer","resolved"].includes(g.primary.status)).length;
+    const tmUrgent = (tmRes.data ?? []).filter((t) => (t.relevance_score ?? 0) >= 7 && (!t.workflow_status || t.workflow_status === "new"))
+      .map((t) => ({
+        id: t.id,
+        title: t.markenname,
+        domain: t.aktenzeichen,
+        score: t.relevance_score,
+        status: t.workflow_status ?? "new",
+        city: null,
+        lastSeen: t.created_at,
+        source: (t.quelle ?? "dpma").toLowerCase().includes("euipo") ? "euipo" : "dpma",
+        href: `/trademarks/${t.id}`,
+      }));
+
+    return (
+      <AppShell user={auth.user} role={role}>
+        <ViewerDashboard
+          urgent={[...urgent, ...tmUrgent].sort((a, b) => (b.score ?? 0) - (a.score ?? 0))}
+          inReview={inReview}
+          stats={{
+            total: allHits.length + (tmRes.data ?? []).length,
+            urgent: urgent.length + tmUrgent.length,
+            inReview: inReview.length,
+            done,
+            lastScan: runsRes.data?.[0]?.started_at ?? null,
+          }}
+        />
+      </AppShell>
+    );
+  }
 
   const params = await searchParams;
   const fullView = params.view === "all";
