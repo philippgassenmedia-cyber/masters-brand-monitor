@@ -179,6 +179,43 @@ Nutze sie als Orientierung für deine Bewertungen:
 ${refs}\n`;
     }
 
+    // Manuell gepflegte Referenzfälle
+    const { data: refCases } = await db
+      .from("reference_cases")
+      .select("title, company_name, url, category, score, reasoning, notes")
+      .eq("active", true)
+      .order("score", { ascending: false })
+      .limit(25);
+
+    if (refCases?.length) {
+      const CATEGORY_DE: Record<string, string> = {
+        clear_violation: "KLARE VERLETZUNG",
+        suspected_violation: "VERDACHT AUF VERLETZUNG",
+        borderline: "GRENZWERTIG",
+        generic_use: "GENERISCHE NUTZUNG",
+        own_brand: "EIGENE MARKE",
+        other_industry: "ANDERE BRANCHE",
+        false_positive: "FEHLALARM",
+      };
+
+      const formatted = refCases
+        .map((c) => {
+          const label = CATEGORY_DE[c.category] ?? c.category;
+          const name = c.company_name ?? c.title;
+          const scoreStr = ` · Score ${c.score}`;
+          const url = c.url ? ` · ${c.url}` : "";
+          const reasoning = c.reasoning ? `\n  Begründung: ${c.reasoning.slice(0, 200)}` : "";
+          const notes = c.notes ? `\n  Hinweis: ${c.notes.slice(0, 150)}` : "";
+          return `- ${label}${scoreStr}: ${name}${url}${reasoning}${notes}`;
+        })
+        .join("\n");
+
+      result += `\n═══ KURATIERTE REFERENZFÄLLE (MANUELL GEPFLEGT) ═══
+Diese Fälle wurden vom Markeninhaber oder seinem Anwalt als Muster hinterlegt.
+Orientiere dich GENAU an diesen Beispielen — sie haben höchste Priorität:
+${formatted}\n`;
+    }
+
     return result;
   } catch {
     return "";
