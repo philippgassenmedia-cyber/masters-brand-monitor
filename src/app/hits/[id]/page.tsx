@@ -69,6 +69,20 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
         <div className="flex items-center justify-between">
           <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">← Zurück zur Übersicht</Link>
           <div className="flex items-center gap-2">
+            {hit.attachment_url && (
+              <a
+                href={`/api/hits/${hit.id}/attachment`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 rounded-full border border-stone-200 bg-white/70 px-3 py-1 text-[11px] font-medium text-stone-600 hover:border-stone-300 hover:bg-white hover:text-stone-900 transition"
+                title="Original-PDF öffnen"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                </svg>
+                Anhang
+              </a>
+            )}
             <DownloadHitButton hitId={hit.id} />
             <DeleteHitButton hitId={hit.id} redirectAfter />
           </div>

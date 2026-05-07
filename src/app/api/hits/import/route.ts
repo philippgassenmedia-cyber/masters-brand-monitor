@@ -20,6 +20,7 @@ const HitSchema = z.object({
     .enum(["clear_violation", "suspected_violation", "borderline", "generic_use", "own_brand", "other_industry", "not_relevant"])
     .optional()
     .nullable(),
+  attachment_url: z.string().optional().nullable(),
 });
 
 // Einzelner manueller Treffer oder Bestätigung nach PDF-Extraktion (Array)
@@ -94,7 +95,23 @@ Leeres Array [] wenn keine Treffer gefunden.`;
         const result = await model.generateContent(parts);
         const text = result.response.text();
         const parsed = z.array(HitSchema).parse(JSON.parse(text));
-        return NextResponse.json({ hits: parsed, count: parsed.length });
+
+        // Upload PDF to Supabase Storage
+        const db = getSupabaseAdminClient();
+        const { randomUUID } = await import("node:crypto");
+        const storagePath = `imports/${randomUUID()}/${file.name}`;
+        let attachmentPath: string | null = null;
+
+        // Ensure bucket exists
+        await db.storage.createBucket("hit-attachments", { public: false }).catch(() => {});
+
+        const { error: uploadErr } = await db.storage
+          .from("hit-attachments")
+          .upload(storagePath, Buffer.from(bytes), { contentType: "application/pdf", upsert: false });
+
+        if (!uploadErr) attachmentPath = storagePath;
+
+        return NextResponse.json({ hits: parsed, count: parsed.length, attachmentPath });
       } catch (e) {
         const msg = (e as Error).message ?? "";
         const isOverload = msg.includes("503") || msg.includes("overloaded") || msg.includes("Service Unavailable");
@@ -149,6 +166,7 @@ Leeres Array [] wenn keine Treffer gefunden.`;
       status: hit.status,
       notes: hit.notes ?? null,
       ai_model: "imported",
+      attachment_url: hit.attachment_url ?? null,
     });
 
     if (error) {

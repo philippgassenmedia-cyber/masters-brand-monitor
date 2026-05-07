@@ -43,6 +43,7 @@ export interface Hit {
   resolved_website: string | null;
   status: HitStatus;
   notes: string | null;
+  attachment_url: string | null;
   created_at: string;
   updated_at: string;
 }
