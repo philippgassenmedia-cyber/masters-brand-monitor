@@ -11,14 +11,17 @@ export default async function ReferenceCasesPage() {
   if (!auth.user) redirect("/login");
 
   const db = getSupabaseAdminClient();
-  const { data: cases } = await db
-    .from("reference_cases")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const [{ data: cases }, { data: hits }] = await Promise.all([
+    db.from("reference_cases").select("*").order("created_at", { ascending: false }),
+    db.from("hits")
+      .select("id, company_name, domain, url, ai_score, violation_category, ai_reasoning, status, title")
+      .order("ai_score", { ascending: false, nullsFirst: false })
+      .limit(500),
+  ]);
 
   return (
     <AppShell user={auth.user}>
-      <ReferenceCasesClient initialCases={cases ?? []} />
+      <ReferenceCasesClient initialCases={cases ?? []} allHits={hits ?? []} />
     </AppShell>
   );
 }
