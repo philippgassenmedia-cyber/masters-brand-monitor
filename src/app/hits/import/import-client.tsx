@@ -24,7 +24,14 @@ interface ImportHit {
   status: HitStatus;
   notes: string | null;
   violation_category: ViolationCategory | null;
+  attachment_url: string | null;
 }
+
+type FileStatus =
+  | { state: "pending" }
+  | { state: "extracting" }
+  | { state: "done"; hits: number }
+  | { state: "error"; msg: string };
 
 const STATUS_LABELS: Record<HitStatus, string> = {
   new: "Neu",
@@ -65,21 +72,50 @@ const EMPTY: ImportHit = {
   status: "new",
   notes: null,
   violation_category: null,
+  attachment_url: null,
 };
+
+const MAX_FILES = 10;
+const CONCURRENCY = 3;
+
+async function extractFile(
+  file: File,
+  onStatus: (s: FileStatus) => void,
+): Promise<ImportHit[]> {
+  onStatus({ state: "extracting" });
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/hits/import", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) {
+      onStatus({ state: "error", msg: data.error ?? "Extraktion fehlgeschlagen" });
+      return [];
+    }
+    const hits: ImportHit[] = (data.hits ?? []).map((h: ImportHit) => ({
+      ...h,
+      attachment_url: data.attachmentPath ?? null,
+    }));
+    onStatus({ state: "done", hits: hits.length });
+    return hits;
+  } catch {
+    onStatus({ state: "error", msg: "Netzwerkfehler" });
+    return [];
+  }
+}
 
 export function ImportClient() {
   const [tab, setTab] = useState<"pdf" | "manual">("pdf");
 
-  // ── Review queue (after PDF extraction) ─────────────────────────────────────
+  // ── Review queue ─────────────────────────────────────────────────────────────
   const [queue, setQueue] = useState<ImportHit[]>([]);
   const [queueIdx, setQueueIdx] = useState(0);
   const [imported, setImported] = useState(0);
   const [skipped, setSkipped] = useState(0);
-  const [attachmentPath, setAttachmentPath] = useState<string | null>(null);
   const queueActive = queue.length > 0 && queueIdx < queue.length;
   const queueDone = queue.length > 0 && queueIdx >= queue.length;
 
-  // ── Manual form ─────────────────────────────────────────────────────────────
+  // ── Manual form ──────────────────────────────────────────────────────────────
   const [form, setForm] = useState<ImportHit>({ ...EMPTY });
   const [saving, setSaving] = useState(false);
   const [manualResult, setManualResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -87,7 +123,6 @@ export function ImportClient() {
   const setField = <K extends keyof ImportHit>(k: K, v: ImportHit[K]) =>
     setForm((p) => ({ ...p, [k]: v }));
 
-  // Load next queued hit into the form
   const loadFromQueue = useCallback((hits: ImportHit[], idx: number) => {
     if (idx < hits.length) {
       setForm({ ...hits[idx] });
@@ -103,7 +138,7 @@ export function ImportClient() {
       const res = await fetch("/api/hits/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify([{ ...form, attachment_url: queueActive ? attachmentPath : null }]),
+        body: JSON.stringify([form]),
       });
       const data = await res.json();
       if (data.inserted > 0) {
@@ -118,11 +153,7 @@ export function ImportClient() {
           setForm({ ...EMPTY });
         }
       } else if (data.skipped > 0) {
-        if (queueActive) {
-          setManualResult({ ok: false, msg: "Bereits vorhanden — übersprungen oder manuell anpassen." });
-        } else {
-          setManualResult({ ok: false, msg: "Dieser Treffer existiert bereits (URL doppelt)." });
-        }
+        setManualResult({ ok: false, msg: "Bereits vorhanden — URL doppelt." });
       } else {
         setManualResult({ ok: false, msg: data.errors?.[0] ?? "Unbekannter Fehler." });
       }
@@ -142,61 +173,91 @@ export function ImportClient() {
     setManualResult(null);
   };
 
-  const resetQueue = () => {
+  const resetAll = () => {
     setQueue([]);
     setQueueIdx(0);
     setImported(0);
     setSkipped(0);
-    setAttachmentPath(null);
     setForm({ ...EMPTY });
     setManualResult(null);
+    setPdfFiles([]);
+    setFileStatuses({});
+    setExtracting(false);
     setTab("pdf");
   };
 
-  // ── PDF upload ───────────────────────────────────────────────────────────────
+  // ── PDF batch upload ─────────────────────────────────────────────────────────
   const fileRef = useRef<HTMLInputElement>(null);
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [pdfFiles, setPdfFiles] = useState<File[]>([]);
+  const [fileStatuses, setFileStatuses] = useState<Record<string, FileStatus>>({});
   const [extracting, setExtracting] = useState(false);
-  const [extractError, setExtractError] = useState<string | null>(null);
+
+  const setFileStatus = useCallback((name: string, status: FileStatus) => {
+    setFileStatuses((prev) => ({ ...prev, [name]: status }));
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0] ?? null;
-    setPdfFile(f);
-    setExtractError(null);
+    const files = Array.from(e.target.files ?? []).slice(0, MAX_FILES);
+    setPdfFiles(files);
+    const statuses: Record<string, FileStatus> = {};
+    for (const f of files) statuses[f.name] = { state: "pending" };
+    setFileStatuses(statuses);
   };
 
-  const extractPdf = useCallback(async () => {
-    if (!pdfFile) return;
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files)
+      .filter((f) => f.type === "application/pdf")
+      .slice(0, MAX_FILES);
+    if (!files.length) return;
+    setPdfFiles(files);
+    const statuses: Record<string, FileStatus> = {};
+    for (const f of files) statuses[f.name] = { state: "pending" };
+    setFileStatuses(statuses);
+  }, []);
+
+  const removeFile = (name: string) => {
+    setPdfFiles((prev) => prev.filter((f) => f.name !== name));
+    setFileStatuses((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  };
+
+  const extractAll = useCallback(async () => {
+    if (!pdfFiles.length) return;
     setExtracting(true);
-    setExtractError(null);
-    try {
-      const fd = new FormData();
-      fd.append("file", pdfFile);
-      const res = await fetch("/api/hits/import", { method: "POST", body: fd });
-      const data = await res.json();
-      if (!res.ok) {
-        setExtractError(data.error ?? "Extraktion fehlgeschlagen.");
-        return;
-      }
-      const hits: ImportHit[] = data.hits ?? [];
-      if (hits.length === 0) {
-        setExtractError("Keine Treffer im PDF gefunden. Bitte prüfe ob das PDF Marken-Trefferdaten enthält.");
-        return;
-      }
-      setQueue(hits);
-      setQueueIdx(0);
-      setImported(0);
-      setSkipped(0);
-      setAttachmentPath(data.attachmentPath ?? null);
-      loadFromQueue(hits, 0);
-      setManualResult(null);
-      setTab("manual");
-    } catch {
-      setExtractError("Netzwerkfehler.");
-    } finally {
-      setExtracting(false);
+
+    const allHits: ImportHit[] = [];
+
+    // Process in batches of CONCURRENCY
+    for (let i = 0; i < pdfFiles.length; i += CONCURRENCY) {
+      const batch = pdfFiles.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        batch.map((file) => extractFile(file, (s) => setFileStatus(file.name, s))),
+      );
+      for (const hits of results) allHits.push(...hits);
     }
-  }, [pdfFile, loadFromQueue]);
+
+    setExtracting(false);
+
+    if (allHits.length === 0) return;
+
+    setQueue(allHits);
+    setQueueIdx(0);
+    setImported(0);
+    setSkipped(0);
+    loadFromQueue(allHits, 0);
+    setManualResult(null);
+    setTab("manual");
+  }, [pdfFiles, setFileStatus, loadFromQueue]);
+
+  const doneCount = Object.values(fileStatuses).filter((s) => s.state === "done" || s.state === "error").length;
+  const totalHitsFound = Object.values(fileStatuses).reduce(
+    (sum, s) => sum + (s.state === "done" ? s.hits : 0),
+    0,
+  );
 
   return (
     <div className="space-y-4">
@@ -204,7 +265,7 @@ export function ImportClient() {
         <div>
           <h1 className="text-base font-semibold text-stone-900">Treffer importieren</h1>
           <p className="text-xs text-stone-500">
-            Manuelle Eingabe oder PDF-Bericht eines anderen Dienstleisters hochladen
+            Manuelle Eingabe oder bis zu {MAX_FILES} PDF-Berichte gleichzeitig hochladen
           </p>
         </div>
         <Link href="/" className="text-xs text-stone-500 hover:text-stone-800">← Übersicht</Link>
@@ -225,16 +286,20 @@ export function ImportClient() {
         ))}
       </div>
 
-      {/* ── PDF-Tab ─────────────────────────────────────────────────────────── */}
+      {/* ── PDF-Tab ──────────────────────────────────────────────────────────── */}
       {tab === "pdf" && (
         <div className="glass space-y-4 rounded-2xl p-5">
           <p className="text-xs text-stone-500">
-            Lade einen Bericht als PDF hoch. Die KI extrahiert alle Treffer und öffnet sie zur
-            manuellen Prüfung — Treffer für Treffer, mit vorausgefülltem Formular.
+            Lade bis zu {MAX_FILES} Berichte als PDF hoch. Die KI extrahiert alle Treffer parallel
+            und öffnet sie zur manuellen Prüfung — Treffer für Treffer.
           </p>
 
           {/* Drop zone */}
-          <label className="flex cursor-pointer flex-col items-center gap-3 rounded-xl border-2 border-dashed border-stone-200 bg-white/40 px-6 py-8 text-center transition hover:border-stone-400 hover:bg-white/70">
+          <label
+            onDrop={handleDrop}
+            onDragOver={(e) => e.preventDefault()}
+            className="flex cursor-pointer flex-col items-center gap-3 rounded-xl border-2 border-dashed border-stone-200 bg-white/40 px-6 py-8 text-center transition hover:border-stone-400 hover:bg-white/70"
+          >
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-stone-300">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
               <polyline points="17 8 12 3 7 8"/>
@@ -242,36 +307,104 @@ export function ImportClient() {
             </svg>
             <div>
               <p className="text-sm font-medium text-stone-700">
-                {pdfFile ? pdfFile.name : "PDF-Datei auswählen"}
+                {pdfFiles.length === 0
+                  ? "PDF-Dateien auswählen oder hierhin ziehen"
+                  : `${pdfFiles.length} Datei${pdfFiles.length !== 1 ? "en" : ""} ausgewählt`}
               </p>
-              <p className="text-xs text-stone-400">{pdfFile ? `${(pdfFile.size / 1024 / 1024).toFixed(1)} MB` : "max. 15 MB"}</p>
+              <p className="text-xs text-stone-400">max. {MAX_FILES} PDFs · je max. 15 MB</p>
             </div>
-            <input ref={fileRef} type="file" accept="application/pdf" className="sr-only" onChange={handleFileChange} />
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/pdf"
+              multiple
+              className="sr-only"
+              onChange={handleFileChange}
+            />
           </label>
 
-          {pdfFile && (
+          {/* File list */}
+          {pdfFiles.length > 0 && (
+            <div className="space-y-2">
+              {pdfFiles.map((file) => {
+                const status = fileStatuses[file.name] ?? { state: "pending" };
+                return (
+                  <div key={file.name} className="flex items-center gap-3 rounded-xl border border-white/70 bg-white/50 px-4 py-2.5">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-stone-400">
+                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-stone-800">{file.name}</p>
+                      <p className="text-[10px] text-stone-400">{(file.size / 1024 / 1024).toFixed(1)} MB</p>
+                    </div>
+                    <div className="shrink-0">
+                      {status.state === "pending" && (
+                        <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-500">Ausstehend</span>
+                      )}
+                      {status.state === "extracting" && (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 animate-pulse">Wird verarbeitet…</span>
+                      )}
+                      {status.state === "done" && (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                          ✓ {status.hits} Treffer
+                        </span>
+                      )}
+                      {status.state === "error" && (
+                        <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700" title={status.msg}>
+                          ✗ Fehler
+                        </span>
+                      )}
+                    </div>
+                    {!extracting && status.state === "pending" && (
+                      <button
+                        onClick={() => removeFile(file.name)}
+                        className="shrink-0 text-stone-300 hover:text-stone-600 transition"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+
+              {extracting && (
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px] text-stone-500">
+                    <span>{doneCount} von {pdfFiles.length} verarbeitet</span>
+                    <span>{totalHitsFound} Treffer gefunden</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
+                    <div
+                      className="h-full rounded-full bg-stone-900 transition-all duration-500"
+                      style={{ width: `${(doneCount / pdfFiles.length) * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {pdfFiles.length > 0 && !extracting && (
             <button
-              onClick={extractPdf}
-              disabled={extracting}
-              className="w-full rounded-xl bg-stone-900 py-2.5 text-sm font-medium text-white transition hover:bg-stone-700 disabled:opacity-50"
+              onClick={extractAll}
+              className="w-full rounded-xl bg-stone-900 py-2.5 text-sm font-medium text-white transition hover:bg-stone-700"
             >
-              {extracting ? "KI analysiert PDF…" : "Treffer extrahieren & prüfen"}
+              {pdfFiles.length === 1
+                ? "Treffer extrahieren & prüfen"
+                : `${pdfFiles.length} PDFs extrahieren & prüfen`}
             </button>
           )}
 
-          {extractError && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700">
-              {extractError}
-            </div>
+          {pdfFiles.length === MAX_FILES && (
+            <p className="text-center text-[10px] text-stone-400">Maximum von {MAX_FILES} Dateien erreicht.</p>
           )}
         </div>
       )}
 
-      {/* ── Manuell-Tab ─────────────────────────────────────────────────────── */}
+      {/* ── Manuell-Tab ──────────────────────────────────────────────────────── */}
       {tab === "manual" && (
         <div className="glass rounded-2xl p-5">
 
-          {/* Queue progress banner */}
           {queueDone && (
             <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
               <div className="text-sm text-emerald-800">
@@ -280,22 +413,34 @@ export function ImportClient() {
                 {" — "}
                 <Link href="/" className="underline">Zur Übersicht</Link>
               </div>
-              <button onClick={resetQueue} className="text-xs text-emerald-700 underline hover:text-emerald-900">
-                Neues PDF
+              <button onClick={resetAll} className="text-xs text-emerald-700 underline hover:text-emerald-900">
+                Neuer Import
               </button>
             </div>
           )}
 
           {queueActive && (
             <div className="mb-5 space-y-2">
-              {/* Progress */}
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-stone-500 uppercase tracking-wider">
+                <span className="text-xs font-semibold uppercase tracking-wider text-stone-500">
                   KI-Vorschlag · Treffer {queueIdx + 1} von {queue.length}
                 </span>
-                <button onClick={resetQueue} className="text-[11px] text-stone-400 hover:text-stone-600 underline">
-                  Abbrechen
-                </button>
+                <div className="flex items-center gap-3">
+                  {form.attachment_url && (
+                    <a
+                      href={`/api/hits/import/preview-pdf?path=${encodeURIComponent(form.attachment_url)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-[11px] font-medium text-orange-700 hover:underline"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      PDF ansehen
+                    </a>
+                  )}
+                  <button onClick={resetAll} className="text-[11px] text-stone-400 underline hover:text-stone-600">
+                    Abbrechen
+                  </button>
+                </div>
               </div>
               <div className="h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
                 <div
@@ -303,26 +448,12 @@ export function ImportClient() {
                   style={{ width: `${(queueIdx / queue.length) * 100}%` }}
                 />
               </div>
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-stone-500">
-                  Felder wurden von der KI vorausgefüllt. Bitte prüfen, ggf. anpassen und bestätigen.
-                </p>
-                {attachmentPath && (
-                  <a
-                    href={`/api/hits/import/preview-pdf?path=${encodeURIComponent(attachmentPath)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-orange-700 hover:underline"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                    PDF ansehen
-                  </a>
-                )}
-              </div>
+              <p className="text-xs text-stone-500">
+                Felder wurden von der KI vorausgefüllt. Bitte prüfen, ggf. anpassen und bestätigen.
+              </p>
             </div>
           )}
 
-          {/* Form */}
           {!queueDone && (
             <>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -456,7 +587,6 @@ export function ImportClient() {
             </>
           )}
 
-          {/* Legend (only in manual-only mode) */}
           {!queueActive && !queueDone && (
             <div className="mt-6 border-t border-white/60 pt-4">
               <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-stone-400">Status-Legende</p>
