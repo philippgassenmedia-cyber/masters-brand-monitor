@@ -169,12 +169,37 @@ Leeres Array [] wenn keine Treffer gefunden.`;
       attachment_url: hit.attachment_url ?? null,
     });
 
-    if (error) {
-      // Doppelte URL überspringen (unique constraint)
-      if (error.code === "23505") {
+    // Fallback: retry without attachment_url if column not in schema cache yet
+    let finalError = error;
+    if (error?.message?.includes("attachment_url")) {
+      const { error: retryError } = await db.from("hits").insert({
+        url: effectiveUrl,
+        domain,
+        title: hit.title ?? hit.company_name,
+        snippet: hit.snippet ?? "",
+        company_name: hit.company_name,
+        address: hit.address ?? null,
+        ai_score: hit.ai_score ?? null,
+        ai_reasoning: hit.ai_reasoning ?? null,
+        ai_is_violation:
+          hit.violation_category === "clear_violation" ||
+          hit.violation_category === "suspected_violation" ||
+          hit.violation_category === "borderline"
+            ? true
+            : null,
+        violation_category: hit.violation_category ?? null,
+        status: hit.status,
+        notes: hit.notes ?? null,
+        ai_model: "imported",
+      });
+      finalError = retryError;
+    }
+
+    if (finalError) {
+      if (finalError.code === "23505") {
         skipped++;
       } else {
-        errors.push(`${hit.company_name}: ${error.message}`);
+        errors.push(`${hit.company_name}: ${finalError.message}`);
       }
     } else {
       inserted++;
