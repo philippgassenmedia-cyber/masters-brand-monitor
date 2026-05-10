@@ -6,6 +6,9 @@ import { NIZZA_BESCHREIBUNG, IMMOBILIEN_KLASSEN } from "@/lib/dpma/nizza-klassen
 import { useScan } from "@/components/scan-context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileDpmaScan } from "@/components/mobile-dpma-scan";
+import { searchDpmaHttp } from "@/lib/dpma/register-search-http";
+import { getTopVariants } from "@/lib/dpma/variant-generator";
+import type { DpmaKurierHit } from "@/lib/dpma/types";
 
 const PREREQS = [
   { name: "Node.js (LTS)", url: "https://nodejs.org" },
@@ -257,8 +260,8 @@ export function DpmaScanClient() {
 }
 
 function DpmaScanClientDesktop() {
-  // Gemini stream context — used only for EUIPO scans
-  const { state: geminiState, startScan, stopScan: stopGemini } = useScan();
+  // Gemini stream context — used for EUIPO scans and DPMA classify (Phase 2)
+  const { state: geminiState, startScan, stopScan: stopGemini, clearScan } = useScan();
 
   // Local UI state
   const [source, setSource] = useState<ScanSource>("dpma");
@@ -270,10 +273,12 @@ function DpmaScanClientDesktop() {
   const [now, setNow] = useState(Date.now());
   const [showSuccess, setShowSuccess] = useState(false);
 
-  // Agent-based scan state (for DPMA)
+  // Browser-scan state (Phase 1: direct DPMA fetch in browser)
+  const [browserPhase, setBrowserPhase] = useState<"idle" | "running" | "cors_error">("idle");
+  const browserAbortRef = useRef(false);
+
+  // Log state for DPMA browser scan Phase 1
   const [agentScan, setAgentScan] = useState<AgentScanState>(AGENT_IDLE);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const seenAzRef = useRef<Set<string>>(new Set());
   const prevAgentPhaseRef = useRef<AgentPhase>("idle");
 
   const logEndRef = useRef<HTMLDivElement>(null);
@@ -301,9 +306,9 @@ function DpmaScanClientDesktop() {
   // Auto-scroll log
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [agentScan.log, geminiState.log]);
+  }, [agentScan.log.length, geminiState.log.length]);
 
-  // Success overlay — agent scan done
+  // Success overlay — DPMA classify done
   useEffect(() => {
     if (prevAgentPhaseRef.current !== "done" && agentScan.phase === "done") {
       setShowSuccess(true);
@@ -313,10 +318,8 @@ function DpmaScanClientDesktop() {
     prevAgentPhaseRef.current = agentScan.phase;
   }, [agentScan.phase]);
 
-  // Success overlay — gemini scan done
+  // Success overlay — gemini/classify scan done
   useEffect(() => {
-    const isEuipoSource = geminiState.source === "euipo";
-    if (!isEuipoSource) return;
     if (prevGeminiPhaseRef.current !== "done" && geminiState.phase === "done") {
       setShowSuccess(true);
       const t = setTimeout(() => setShowSuccess(false), 3000);
@@ -325,141 +328,113 @@ function DpmaScanClientDesktop() {
     prevGeminiPhaseRef.current = geminiState.phase;
   }, [geminiState.phase, geminiState.source]);
 
-  // Poll loop for agent-based DPMA scans
-  const stopPoll = useCallback(() => {
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-  }, []);
-
-  const runPoll = useCallback(async (sinceTs: string, jobId: string) => {
-    try {
-      // Check job status
-      const scansRes = await fetch("/api/scheduled-scans");
-      if (scansRes.ok) {
-        const { scans } = await scansRes.json() as { scans: Array<{ id: string; status: string; result?: Record<string, unknown> }> };
-        const job = scans.find((s) => s.id === jobId);
-        if (job) {
-          setAgentScan((prev) => {
-            const log = [...prev.log];
-            if (job.status === "running" && prev.jobStatus !== "running") {
-              log.push({ ts: Date.now(), tone: "ok", text: "Agent hat Auftrag aufgenommen — durchsucht DPMA-Register…" });
-            }
-            if ((job.status === "completed" || job.status === "partial") && prev.jobStatus !== job.status) {
-              const r = job.result as { new?: number; updated?: number; found?: number; errors?: number } | undefined;
-              log.push({ ts: Date.now(), tone: "ok", text: `Scan abgeschlossen: ${r?.new ?? 0} neu, ${r?.updated ?? 0} bekannt, ${r?.found ?? 0} gesamt` });
-            }
-            return { ...prev, jobStatus: job.status, log };
-          });
-
-          if (job.status === "completed" || job.status === "partial") {
-            stopPoll();
-            setAgentScan((prev) => ({ ...prev, phase: "done" }));
-            return;
-          }
-        }
-      }
-
-      // Fetch new trademarks since job was created
-      const tmRes = await fetch(`/api/trademarks/recent?since=${encodeURIComponent(sinceTs)}`);
-      if (tmRes.ok) {
-        const { trademarks } = await tmRes.json() as {
-          trademarks: Array<{ id: string; aktenzeichen: string; markenname: string; relevance_score: number | null; resolved_website: string | null; quelle: string }>
-        };
-        const newOnes = trademarks.filter((t) => !seenAzRef.current.has(t.aktenzeichen));
-        if (newOnes.length > 0) {
-          newOnes.forEach((t) => seenAzRef.current.add(t.aktenzeichen));
-          setAgentScan((prev) => {
-            const newLog = newOnes.map((t) => ({
-              ts: Date.now(),
-              tone: "ok" as const,
-              text: `Neu: ${t.markenname} (${t.aktenzeichen})${t.resolved_website ? ` → ${tryHostname(t.resolved_website)}` : ""}`,
-            }));
-            return {
-              ...prev,
-              phase: prev.phase === "pending" ? "running" : prev.phase,
-              hits: [
-                ...newOnes.map((t) => ({
-                  id: t.id,
-                  aktenzeichen: t.aktenzeichen,
-                  markenname: t.markenname,
-                  score: t.relevance_score,
-                  website: t.resolved_website,
-                  quelle: t.quelle,
-                })),
-                ...prev.hits,
-              ].slice(0, 200),
-              log: [...prev.log, ...newLog].slice(-300),
-            };
-          });
-        }
-      }
-    } catch {
-      // Network hiccup — wait for next tick
-    }
-  }, [stopPoll]);
-
-  const stopAgentScan = useCallback(() => {
-    stopPoll();
-    setAgentScan((prev) => ({ ...prev, phase: "idle" }));
-    seenAzRef.current.clear();
-  }, [stopPoll]);
-
-  const startAgentScan = useCallback(async (klassen: string) => {
-    seenAzRef.current.clear();
-    const sinceTs = new Date().toISOString();
-
+  const startBrowserScan = useCallback(async (klassen: string, opts: { nurDE: boolean; nurInKraft: boolean; zeitraumMonate: number }) => {
+    browserAbortRef.current = false;
+    setBrowserPhase("running");
     setAgentScan({
-      phase: "pending",
+      phase: "running",
       jobId: null,
-      sinceTs,
+      sinceTs: new Date().toISOString(),
       hits: [],
-      log: [{ ts: Date.now(), tone: "info", text: "Erstelle Scan-Auftrag…" }],
+      log: [{ ts: Date.now(), tone: "info", text: "Phase 1: Verbinde direkt mit DPMA-Register…" }],
       jobStatus: null,
       startedAt: Date.now(),
     });
 
-    try {
-      const res = await fetch("/api/scheduled-scans", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scheduled_at: sinceTs,
-          scan_type: "dpma",
-          notes: `UI-Auftrag · Klassen: ${klassen}`,
-        }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      // Find the job we just created
-      const listRes = await fetch("/api/scheduled-scans");
-      const { scans } = await listRes.json() as { scans: Array<{ id: string; status: string; scheduled_at: string }> };
-      const job = scans.find((s) => s.status === "pending" && s.scheduled_at >= sinceTs.slice(0, 16));
-      const jobId = job?.id ?? null;
-
+    const addLog = (text: string, tone: AgentLogLine["tone"] = "info") => {
       setAgentScan((prev) => ({
         ...prev,
-        jobId,
-        log: [
-          ...prev.log,
-          { ts: Date.now(), tone: "ok", text: `Auftrag erstellt${jobId ? ` (${jobId.slice(0, 8)}…)` : ""}. Warte auf lokalen Agenten…` },
-          { ts: Date.now(), tone: "info", text: "Tipp: Agent herunterladen und starten, falls noch nicht aktiv." },
-        ],
+        log: [...prev.log, { ts: Date.now(), tone, text }].slice(-300),
       }));
+    };
 
-      if (jobId) {
-        stopPoll();
-        pollRef.current = setInterval(() => runPoll(sinceTs, jobId), 5000);
-      } else {
-        // No jobId found — still poll for trademarks
-        pollRef.current = setInterval(() => runPoll(sinceTs, ""), 5000);
+    try {
+      const stemsRes = await fetch("/api/dpma/stems");
+      if (!stemsRes.ok) throw new Error(`Stämme nicht abrufbar: HTTP ${stemsRes.status}`);
+      const { stems: stemsData } = await stemsRes.json() as { stems: Array<{ stamm: string }> };
+      const stems: string[] = stemsData.map((s) => s.stamm).filter(Boolean);
+      if (stems.length === 0) stems.push("master");
+
+      addLog(`${stems.length} Markenstamm/-stämme: ${stems.join(", ")}`);
+
+      const seenAz = new Set<string>();
+      const allHits: DpmaKurierHit[] = [];
+
+      for (const stem of stems) {
+        if (browserAbortRef.current) break;
+        const variants = getTopVariants(stem, 6);
+        addLog(`Stamm „${stem}": ${variants.length} Varianten`);
+
+        for (let i = 0; i < variants.length; i++) {
+          if (browserAbortRef.current) break;
+          const variant = variants[i];
+          addLog(`[${i + 1}/${variants.length}] Suche „${variant}"…`);
+
+          const variantLog: string[] = [];
+          const { hits: rawHits, corsBlocked, diag } = await searchDpmaHttp(
+            variant,
+            { klassen, nurDE: opts.nurDE, nurInKraft: opts.nurInKraft, zeitraumMonate: opts.zeitraumMonate || undefined },
+            seenAz,
+            variantLog,
+          );
+
+          for (const l of variantLog) {
+            addLog(l, l.startsWith("✗") ? "err" : l.startsWith("✓") ? "ok" : "info");
+          }
+
+          if (corsBlocked) {
+            setBrowserPhase("cors_error");
+            setAgentScan((prev) => ({
+              ...prev,
+              phase: "error",
+              log: [
+                ...prev.log,
+                { ts: Date.now(), tone: "err", text: "DPMA blockiert direkte Browser-Anfragen (CORS-Fehler)." },
+              ],
+            }));
+            return;
+          }
+
+          addLog(`„${variant}": ${rawHits.length} Treffer · ${diag}`, rawHits.length > 0 ? "ok" : "info");
+
+          for (const h of rawHits) {
+            allHits.push({
+              aktenzeichen: h.az,
+              markenname: h.name,
+              anmelder: null,
+              anmeldetag: null,
+              veroeffentlichungstag: null,
+              status: h.status,
+              nizza_klassen: [],
+              waren_dienstleistungen: null,
+              inhaber_anschrift: null,
+              vertreter: null,
+              markenform: null,
+              schutzdauer_bis: null,
+            });
+          }
+
+          if (i < variants.length - 1) await new Promise((r) => setTimeout(r, 500));
+        }
       }
+
+      if (browserAbortRef.current) return;
+
+      addLog(`Phase 1 abgeschlossen: ${allHits.length} Treffer. Starte Klassifizierung auf Server…`, "ok");
+
+      setBrowserPhase("idle");
+      setAgentScan((prev) => ({ ...prev, phase: "done" }));
+      startScan(["/api/dpma/classify"], { hits: allHits }, "dpma");
     } catch (e) {
+      const msg = (e as Error).message;
+      setBrowserPhase("cors_error");
       setAgentScan((prev) => ({
         ...prev,
         phase: "error",
-        log: [...prev.log, { ts: Date.now(), tone: "err", text: `Fehler: ${(e as Error).message}` }],
+        log: [...prev.log, { ts: Date.now(), tone: "err", text: `Fehler: ${msg}` }],
       }));
     }
-  }, [stopPoll, runPoll]);
+  }, [startScan]);
 
   const start = () => {
     const body: Record<string, unknown> = {
@@ -468,91 +443,97 @@ function DpmaScanClientDesktop() {
       nurInKraft,
       zeitraumMonate: zeitraumMonate || undefined,
     };
+    const scanOpts = { nurDE, nurInKraft, zeitraumMonate };
 
     if (source === "euipo") {
       startScan(["/api/euipo/search/stream"], body, "euipo");
     } else if (source === "both") {
-      startAgentScan(klassenString);
+      startBrowserScan(klassenString, scanOpts);
       startScan(["/api/euipo/search/stream"], body, "euipo");
     } else {
-      startAgentScan(klassenString);
+      startBrowserScan(klassenString, scanOpts);
     }
   };
 
   const stop = () => {
-    if (source === "dpma") {
-      stopAgentScan();
-    } else if (source === "euipo") {
-      stopGemini();
-    } else {
-      stopAgentScan();
-      stopGemini();
-    }
+    browserAbortRef.current = true;
+    setBrowserPhase("idle");
+    setAgentScan(AGENT_IDLE);
+    stopGemini();
   };
 
-  // Cleanup poll on unmount
-  useEffect(() => () => stopPoll(), [stopPoll]);
-
   // Determine display state
-  const isDpmaActive = agentScan.phase !== "idle";
+  const isBrowserScanning = browserPhase === "running";
+  const isClassifying = geminiState.source === "dpma" && geminiState.running;
+  const isDpmaActive = isBrowserScanning || browserPhase === "cors_error" || agentScan.phase !== "idle"
+    || (geminiState.source === "dpma" && (geminiState.running || geminiState.phase === "done"));
   const isEuipoActive = geminiState.source === "euipo" && (geminiState.running || geminiState.phase === "done");
 
-  const running = (source === "dpma" && (agentScan.phase === "pending" || agentScan.phase === "running"))
-    || (source === "euipo" && geminiState.running)
-    || (source === "both" && (agentScan.phase === "pending" || agentScan.phase === "running" || geminiState.running));
+  const running = (source !== "euipo" && (isBrowserScanning || isClassifying))
+    || (source !== "dpma" && geminiState.source === "euipo" && geminiState.running);
 
+  // Merge Phase 1 (browser) + Phase 2 (classify SSE) logs for DPMA
   const activeLog: AgentLogLine[] = source === "euipo"
     ? geminiState.log.map((l) => ({ ts: l.ts, tone: l.tone as AgentLogLine["tone"], text: l.text }))
-    : agentScan.log;
+    : [
+        ...agentScan.log,
+        ...(geminiState.source === "dpma"
+          ? geminiState.log.map((l) => ({ ts: l.ts, tone: l.tone as AgentLogLine["tone"], text: l.text }))
+          : []),
+      ].sort((a, b) => a.ts - b.ts);
 
-  const newHits: NewHit[] = source === "euipo"
-    ? geminiState.rawHits.map((h: Record<string, unknown>) => ({
-        id: String(h.id ?? ""),
-        aktenzeichen: String(h.aktenzeichen ?? ""),
-        markenname: String(h.markenname ?? ""),
-        score: (h.score as number | null) ?? null,
-        website: (h.website as string | null) ?? null,
-        quelle: "euipo",
-      }))
-    : agentScan.hits;
+  // New hits: from classify SSE (geminiState.rawHits) for DPMA, same for EUIPO
+  const newHits: NewHit[] = geminiState.rawHits.map((h: Record<string, unknown>) => ({
+    id: String(h.id ?? ""),
+    aktenzeichen: String(h.aktenzeichen ?? ""),
+    markenname: String(h.markenname ?? ""),
+    score: (h.score as number | null) ?? null,
+    website: (h.website as string | null) ?? null,
+    quelle: geminiState.source === "euipo" ? "euipo" : "dpma",
+  }));
 
-  const startedAt = source === "euipo" ? geminiState.startedAt : agentScan.startedAt;
+  const startedAt = agentScan.startedAt ?? geminiState.startedAt;
   const elapsed = startedAt ? now - startedAt : 0;
   const isFiltersHidden = (isDpmaActive || isEuipoActive) && (agentScan.phase !== "idle" || geminiState.phase !== "idle");
 
   // Status text
   let statusTitle = "Bereit";
   let statusSub = source === "dpma"
-    ? "Sucht direkt im DPMA-Register — lokaler Agent erforderlich"
+    ? "Sucht direkt im DPMA-Register via Browser"
     : source === "euipo"
     ? "Suche via Gemini Grounding (Google-Index)"
-    : "DPMA via lokalem Agent · EUIPO via Gemini Grounding";
+    : "DPMA via Browser · EUIPO via Gemini Grounding";
 
-  if (agentScan.phase === "pending") {
-    statusTitle = "Warte auf lokalen Agenten…";
-    statusSub = "Agent muss auf deinem Rechner laufen (alle 30s Polling)";
-  } else if (agentScan.phase === "running") {
-    statusTitle = "Agent durchsucht DPMA-Register";
-    statusSub = `Verstrichen: ${formatDuration(elapsed)}`;
+  if (isBrowserScanning) {
+    statusTitle = "Phase 1: DPMA-Register wird durchsucht…";
+    statusSub = `Browser-Scan läuft · ${formatDuration(elapsed)}`;
+  } else if (isClassifying) {
+    statusTitle = "Phase 2: Klassifiziere Treffer…";
+    statusSub = `KI-Analyse läuft · ${formatDuration(elapsed)}`;
   } else if (source === "euipo" && geminiState.running) {
     statusTitle = "Durchsuche EUIPO via Gemini…";
     statusSub = `Verstrichen: ${formatDuration(elapsed)}`;
-  } else if (agentScan.phase === "done" || (source === "euipo" && geminiState.phase === "done")) {
+  } else if (browserPhase === "cors_error") {
+    statusTitle = "CORS blockiert";
+    statusSub = "DPMA lässt keine direkten Browser-Anfragen zu";
+  } else if (geminiState.phase === "done" || agentScan.phase === "done") {
     statusTitle = "Suche abgeschlossen";
     statusSub = `Dauer: ${formatDuration(elapsed)}`;
   } else if (agentScan.phase === "error") {
-    statusTitle = "Fehler beim Starten";
+    statusTitle = "Fehler";
     statusSub = "Bitte erneut versuchen";
   }
 
-  const dpmaHits = agentScan.hits.length;
-  const euipoHits = geminiState.newHits;
+  const dpmaHits = geminiState.source === "dpma" ? geminiState.newHits : 0;
+  const euipoHits = geminiState.source === "euipo" ? geminiState.newHits : 0;
   const totalNew = source === "dpma" ? dpmaHits : source === "euipo" ? euipoHits : dpmaHits + euipoHits;
 
   const euipoPct = geminiState.progress.total > 0 ? geminiState.progress.current / geminiState.progress.total : 0;
 
-  const isAgentIdle = agentScan.phase === "idle";
-  const isDone = agentScan.phase === "done" || agentScan.phase === "error" || (source === "euipo" && geminiState.phase === "done" && !geminiState.running);
+  const isAgentIdle = !running && browserPhase === "idle" && agentScan.phase === "idle"
+    && !geminiState.running && geminiState.phase !== "done";
+  const isDone = browserPhase === "cors_error" || agentScan.phase === "error"
+    || (geminiState.phase === "done" && !geminiState.running && (isDpmaActive || isEuipoActive));
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -593,10 +574,10 @@ function DpmaScanClientDesktop() {
             </div>
             <span className="ml-3 text-[11px] text-stone-400">
               {source === "dpma"
-                ? "Echter Register-Zugriff via lokalem Playwright-Agenten"
+                ? "Echter Register-Zugriff via Browser (kein Agent nötig)"
                 : source === "euipo"
                 ? "Google-Index via Gemini Grounding"
-                : "Agent für DPMA · Grounding für EUIPO"}
+                : "Browser-Scan für DPMA · Grounding für EUIPO"}
             </span>
           </div>
 
@@ -712,8 +693,8 @@ function DpmaScanClientDesktop() {
         </section>
       )}
 
-      {/* Agent-Download-Callout — nur im Idle-Zustand und bei DPMA-Quelle */}
-      {!isFiltersHidden && source !== "euipo" && <AgentCallout />}
+      {/* Agent-Callout — nur bei CORS-Fehler als Fallback */}
+      {browserPhase === "cors_error" && source !== "euipo" && <AgentCallout />}
 
       {/* Start / Status */}
       <section className="glass mb-3 px-5 py-4">
@@ -763,7 +744,7 @@ function DpmaScanClientDesktop() {
               </button>
             ) : isDone ? (
               <button
-                onClick={() => { setAgentScan(AGENT_IDLE); seenAzRef.current.clear(); }}
+                onClick={() => { setBrowserPhase("idle"); setAgentScan(AGENT_IDLE); clearScan(); }}
                 className="h-10 rounded-full border border-stone-200 bg-white/70 px-6 text-xs font-semibold text-stone-700 hover:bg-white"
               >
                 Neu starten
@@ -772,7 +753,7 @@ function DpmaScanClientDesktop() {
           </div>
         </div>
 
-        {/* Progress bar — EUIPO Gemini only */}
+        {/* Progress bar — EUIPO only */}
         {isEuipoActive && geminiState.progress.total > 0 && (
           <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-stone-200/70">
             <div
@@ -782,11 +763,34 @@ function DpmaScanClientDesktop() {
           </div>
         )}
 
-        {/* Pending agent hint */}
-        {agentScan.phase === "pending" && (
-          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-900">
-            <strong>Agent noch nicht aktiv?</strong>{" "}
-            Lade den Agenten oben herunter und starte ihn auf deinem Rechner. Er prüft automatisch alle 30 Sekunden auf neue Aufträge.
+        {/* CORS error banner */}
+        {browserPhase === "cors_error" && (
+          <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50/70 px-4 py-3">
+            <div className="mb-1 text-xs font-semibold text-rose-900">DPMA blockiert direkte Browser-Anfragen</div>
+            <div className="mb-2 text-xs text-rose-800">
+              Der DPMA-Server sendet keine CORS-Header. Für automatische Suche starte bitte den lokalen Agenten:
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="rounded-lg bg-rose-100 px-3 py-1.5 text-xs font-mono text-rose-900">
+                npm run dpma-agent
+              </code>
+              <button
+                onClick={() => navigator.clipboard.writeText("npm run dpma-agent")}
+                className="rounded-full border border-rose-200 bg-white/70 px-3 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100"
+              >
+                Kopieren
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Progress bar — classify phase */}
+        {isClassifying && geminiState.progress.total > 0 && (
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-stone-200/70">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-stone-700 to-stone-900 transition-all duration-500"
+              style={{ width: `${Math.max(2, (geminiState.progress.current / geminiState.progress.total) * 100)}%` }}
+            />
           </div>
         )}
       </section>
@@ -837,9 +841,7 @@ function DpmaScanClientDesktop() {
             <div className="scroll-area min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
               {newHits.length === 0 && (
                 <div className="flex h-full items-center justify-center text-xs text-stone-500">
-                  {agentScan.phase === "pending"
-                    ? "Warte auf Agenten…"
-                    : "Noch keine neuen Marken gefunden."}
+                  {isBrowserScanning ? "Phase 1 läuft — Klassifizierung startet danach…" : "Noch keine neuen Marken gefunden."}
                 </div>
               )}
               {newHits.map((h) => {
