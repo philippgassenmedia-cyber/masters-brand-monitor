@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import type { HitStatus } from "@/lib/types";
 
 export interface KanbanCard {
@@ -18,7 +18,6 @@ export interface KanbanCard {
   type: "hit" | "trademark";
 }
 
-// Column id → which statuses live there + what status to assign on drop
 const COLUMN_STATUS: Record<"open" | "review" | "done", HitStatus> = {
   open: "new",
   review: "reviewing",
@@ -104,9 +103,8 @@ function KanbanCardItem({
         active:cursor-grabbing hover:bg-white/80 hover:shadow-sm
         ${isDragging ? "opacity-40 scale-95" : "opacity-100"}`}
     >
-      {/* drag handle hint */}
       <div className="absolute right-2 top-2 flex flex-col gap-0.5 opacity-0 transition-opacity group-hover:opacity-30">
-        {[0,1,2].map(i => <div key={i} className="h-0.5 w-3 rounded-full bg-stone-500" />)}
+        {[0, 1, 2].map((i) => <div key={i} className="h-0.5 w-3 rounded-full bg-stone-500" />)}
       </div>
 
       <Link
@@ -151,8 +149,6 @@ interface ColumnProps {
   title: string;
   color: string;
   cards: KanbanCard[];
-  total: number;
-  fullView: boolean;
   emptyText: string;
   isDragOver: boolean;
   draggingCard: KanbanCard | null;
@@ -160,15 +156,12 @@ interface ColumnProps {
   onDragLeave: () => void;
   onDrop: (colId: "open" | "review" | "done") => void;
   onDragStart: (card: KanbanCard) => void;
-  fullViewLink: string;
 }
 
 function KanbanColumn({
-  id, title, color, cards, total, fullView, emptyText,
-  isDragOver, draggingCard, onDragOver, onDragLeave, onDrop, onDragStart, fullViewLink,
+  id, title, color, cards, emptyText,
+  isDragOver, draggingCard, onDragOver, onDragLeave, onDrop, onDragStart,
 }: ColumnProps) {
-  const shown = fullView ? cards : cards.slice(0, 15);
-  const hidden = total - shown.length;
   const canDrop = draggingCard !== null && cardColumn(draggingCard) !== id;
 
   return (
@@ -179,33 +172,25 @@ function KanbanColumn({
       onDragLeave={onDragLeave}
       onDrop={(e) => { e.preventDefault(); onDrop(id); }}
     >
-      {/* Header */}
       <div className={`flex items-center justify-between border-b border-white/60 px-4 py-3 ${color}
         ${isDragOver && canDrop ? "bg-stone-100/80" : ""}`}>
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold text-stone-900">{title}</h2>
-          <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] font-bold text-stone-700">{total}</span>
+          <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[11px] font-bold text-stone-700">{cards.length}</span>
         </div>
-        {!fullView && total > 0 && (
-          <Link href={fullViewLink} className="text-[10px] font-medium text-stone-500 hover:text-stone-800">
-            Alle →
-          </Link>
-        )}
       </div>
 
-      {/* Drop target hint */}
       {isDragOver && canDrop && (
         <div className="mx-3 mt-2 flex items-center justify-center rounded-xl border-2 border-dashed border-stone-300 bg-stone-50/60 py-3 text-xs font-medium text-stone-400">
           Hier ablegen
         </div>
       )}
 
-      {/* Cards */}
-      <div className={`flex-1 space-y-2 overflow-y-auto p-3 ${fullView ? "max-h-[calc(100vh-280px)]" : ""}`}>
-        {shown.length === 0 && !isDragOver && (
+      <div className="flex-1 space-y-2 overflow-y-auto p-3 max-h-[calc(100vh-340px)]">
+        {cards.length === 0 && !isDragOver && (
           <p className="px-1 py-6 text-center text-xs text-stone-400">{emptyText}</p>
         )}
-        {shown.map((c) => (
+        {cards.map((c) => (
           <KanbanCardItem
             key={`${c.source}-${c.id}`}
             card={c}
@@ -213,42 +198,68 @@ function KanbanColumn({
             onDragStart={onDragStart}
           />
         ))}
-        {!fullView && hidden > 0 && (
-          <Link
-            href={fullViewLink}
-            className="block rounded-xl border border-dashed border-stone-200 py-2 text-center text-xs text-stone-400 hover:border-stone-400 hover:text-stone-600"
-          >
-            + {hidden} weitere
-          </Link>
-        )}
       </div>
     </div>
   );
 }
 
-export function KanbanBoard({
-  initialOpen,
-  initialReview,
-  initialDone,
-  fullView,
-}: {
-  initialOpen: KanbanCard[];
-  initialReview: KanbanCard[];
-  initialDone: KanbanCard[];
-  fullView: boolean;
-}) {
-  const [columns, setColumns] = useState<Record<"open" | "review" | "done", KanbanCard[]>>({
-    open: initialOpen,
-    review: initialReview,
-    done: initialDone,
-  });
+// ── Filter constants ───────────────────────────────────────────────────────────
+
+const SCORE_OPTIONS = [
+  { value: 0, label: "Alle" },
+  { value: 3, label: "≥ 3" },
+  { value: 5, label: "≥ 5" },
+  { value: 7, label: "≥ 7" },
+  { value: 9, label: "≥ 9" },
+] as const;
+
+const SOURCE_OPTIONS = [
+  { id: "web", label: "Web", active: "bg-sky-500 text-white", inactive: "bg-sky-50 text-sky-600 hover:bg-sky-100" },
+  { id: "dpma", label: "DPMA", active: "bg-violet-500 text-white", inactive: "bg-violet-50 text-violet-600 hover:bg-violet-100" },
+  { id: "euipo", label: "EUIPO", active: "bg-indigo-500 text-white", inactive: "bg-indigo-50 text-indigo-600 hover:bg-indigo-100" },
+  { id: "import", label: "Import", active: "bg-stone-600 text-white", inactive: "bg-stone-100 text-stone-500 hover:bg-stone-200" },
+] as const;
+
+// ── KanbanBoard ───────────────────────────────────────────────────────────────────
+
+export function KanbanBoard({ cards: initialCards }: { cards: KanbanCard[] }) {
+  const [allCards, setAllCards] = useState<KanbanCard[]>(initialCards);
+
+  const [minScore, setMinScore] = useState<number>(0);
+  const [activeSources, setActiveSources] = useState<Set<string>>(new Set());
+  const [activeType, setActiveType] = useState<"all" | "hit" | "trademark">("all");
+
   const [draggingCard, setDraggingCard] = useState<KanbanCard | null>(null);
   const [dragOverCol, setDragOverCol] = useState<"open" | "review" | "done" | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const handleDragStart = useCallback((card: KanbanCard) => {
-    setDraggingCard(card);
+  const toggleSource = useCallback((src: string) => {
+    setActiveSources((prev) => {
+      const next = new Set(prev);
+      if (next.has(src)) next.delete(src);
+      else next.add(src);
+      return next;
+    });
   }, []);
+
+  const { openCards, reviewCards, doneCards, filteredTotal } = useMemo(() => {
+    const filtered = allCards.filter((c) => {
+      if (minScore > 0 && (c.score ?? 0) < minScore) return false;
+      if (activeSources.size > 0 && !activeSources.has(c.source)) return false;
+      if (activeType !== "all" && c.type !== activeType) return false;
+      return true;
+    });
+    return {
+      openCards: filtered.filter((c) => c.status === "new"),
+      reviewCards: filtered.filter((c) => c.status === "reviewing"),
+      doneCards: filtered.filter((c) => DONE_STATUSES.has(c.status)),
+      filteredTotal: filtered.length,
+    };
+  }, [allCards, minScore, activeSources, activeType]);
+
+  const hasActiveFilter = minScore > 0 || activeSources.size > 0 || activeType !== "all";
+
+  const handleDragStart = useCallback((card: KanbanCard) => setDraggingCard(card), []);
 
   const handleDragOver = useCallback((colId: "open" | "review" | "done") => {
     if (leaveTimer.current) { clearTimeout(leaveTimer.current); leaveTimer.current = null; }
@@ -265,24 +276,15 @@ export function KanbanBoard({
     const sourceCol = cardColumn(draggingCard);
     if (sourceCol === targetCol) { setDraggingCard(null); return; }
 
-    // Determine new status
     let newStatus: HitStatus = COLUMN_STATUS[targetCol];
-    // Preserve more specific "done" statuses when dragging within done column
     if (targetCol === "done" && DONE_STATUSES.has(draggingCard.status)) {
       newStatus = draggingCard.status;
     }
 
-    // Optimistic update
-    setColumns((prev) => {
-      const updated = { ...prev };
-      updated[sourceCol] = prev[sourceCol].filter((c) => c.id !== draggingCard.id);
-      const movedCard = { ...draggingCard, status: newStatus };
-      updated[targetCol] = [movedCard, ...prev[targetCol]];
-      return updated;
-    });
+    setAllCards((prev) =>
+      prev.map((c) => c.id === draggingCard.id ? { ...c, status: newStatus } : c),
+    );
     setDraggingCard(null);
-
-    // API call (fire and forget — no rollback for now)
     updateStatus(draggingCard, newStatus).catch(console.error);
   }, [draggingCard]);
 
@@ -297,32 +299,121 @@ export function KanbanBoard({
     { id: "done", title: "Bearbeitet", color: "bg-emerald-50/40", emptyText: "Noch keine abgeschlossenen Treffer." },
   ];
 
-  const fullViewLink = fullView ? "/" : "/?view=all";
+  const colCards: Record<"open" | "review" | "done", KanbanCard[]> = {
+    open: openCards,
+    review: reviewCards,
+    done: doneCards,
+  };
 
   return (
-    <div
-      className="grid gap-4 lg:grid-cols-3"
-      onDragEnd={handleDragEnd}
-    >
-      {colDefs.map((col) => (
-        <KanbanColumn
-          key={col.id}
-          id={col.id}
-          title={col.title}
-          color={col.color}
-          cards={columns[col.id]}
-          total={columns[col.id].length}
-          fullView={fullView}
-          emptyText={col.emptyText}
-          isDragOver={dragOverCol === col.id}
-          draggingCard={draggingCard}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onDragStart={handleDragStart}
-          fullViewLink={fullViewLink}
-        />
-      ))}
+    <div onDragEnd={handleDragEnd}>
+      {/* Filter Bar */}
+      <div className="glass mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 px-4 py-3">
+        {/* Score */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Score</span>
+          <div className="flex gap-1">
+            {SCORE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setMinScore(opt.value)}
+                className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                  minScore === opt.value
+                    ? "bg-stone-900 text-white shadow-sm"
+                    : "bg-white/60 text-stone-500 hover:bg-white/90 hover:text-stone-800"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Source */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Quelle</span>
+          <button
+            type="button"
+            onClick={() => setActiveSources(new Set())}
+            className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+              activeSources.size === 0
+                ? "bg-stone-900 text-white shadow-sm"
+                : "bg-white/60 text-stone-500 hover:bg-white/90 hover:text-stone-800"
+            }`}
+          >
+            Alle
+          </button>
+          {SOURCE_OPTIONS.map((src) => (
+            <button
+              key={src.id}
+              type="button"
+              onClick={() => toggleSource(src.id)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                activeSources.has(src.id) ? src.active : src.inactive
+              }`}
+            >
+              {src.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Type */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">Typ</span>
+          {(["all", "hit", "trademark"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setActiveType(t)}
+              className={`rounded-full px-3 py-1 text-xs font-semibold transition ${
+                activeType === t
+                  ? "bg-stone-900 text-white shadow-sm"
+                  : "bg-white/60 text-stone-500 hover:bg-white/90 hover:text-stone-800"
+              }`}
+            >
+              {t === "all" ? "Alle" : t === "hit" ? "Treffer" : "Marken"}
+            </button>
+          ))}
+        </div>
+
+        {/* Result count + reset */}
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-[11px] text-stone-400">
+            {filteredTotal} {filteredTotal === 1 ? "Eintrag" : "Einträge"}
+            {hasActiveFilter && ` von ${allCards.length}`}
+          </span>
+          {hasActiveFilter && (
+            <button
+              type="button"
+              onClick={() => { setMinScore(0); setActiveSources(new Set()); setActiveType("all"); }}
+              className="rounded-full border border-stone-200 px-3 py-1 text-[11px] text-stone-500 hover:border-stone-400 hover:text-stone-800 transition"
+            >
+              Filter zurücksetzen ×
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Columns */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        {colDefs.map((col) => (
+          <KanbanColumn
+            key={col.id}
+            id={col.id}
+            title={col.title}
+            color={col.color}
+            cards={colCards[col.id]}
+            emptyText={col.emptyText}
+            isDragOver={dragOverCol === col.id}
+            draggingCard={draggingCard}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onDragStart={handleDragStart}
+          />
+        ))}
+      </div>
     </div>
   );
 }

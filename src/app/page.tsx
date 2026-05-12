@@ -56,19 +56,13 @@ function buildDailySeries(timestamps: string[], days = 14): number[] {
   return Object.values(buckets);
 }
 
-
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string }>;
-}) {
+export default async function DashboardPage() {
   const supabase = await getSupabaseServerClient();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) redirect("/login");
 
   const role = await getUserRole();
 
-  // ── Viewer mode: simplified mobile-first dashboard ───────────────────────
   if (role === "viewer") {
     const [hitsRes, runsRes, tmRes] = await Promise.all([
       supabase.from("hits").select("id, domain, title, company_name, address, subject_company_address, ai_score, status, last_seen_at, url, ai_model").order("ai_score", { ascending: false, nullsFirst: false }).limit(500),
@@ -124,9 +118,6 @@ export default async function DashboardPage({
     );
   }
 
-  const params = await searchParams;
-  const fullView = params.view === "all";
-
   const [hitsRes, kpiRes, runsRes, tmRes] = await Promise.all([
     supabase
       .from("hits")
@@ -147,9 +138,6 @@ export default async function DashboardPage({
       .limit(1000),
   ]);
 
-  // ── Build unified kanban cards ────────────────────────────────────────────
-
-  // Web / import hits
   const rawHits = (hitsRes.data ?? []) as (Hit & { ai_model?: string | null })[];
   const groups = groupHits(rawHits);
 
@@ -167,7 +155,6 @@ export default async function DashboardPage({
     type: "hit" as const,
   }));
 
-  // DPMA / EUIPO trademarks
   const tmCards: KanbanCard[] = (tmRes.data ?? []).map((t) => ({
     id: t.id,
     title: t.markenname,
@@ -182,28 +169,16 @@ export default async function DashboardPage({
     type: "trademark" as const,
   }));
 
-  // Merge and sort by score
   const allCards = [...hitCards, ...tmCards].sort(
     (a, b) => (b.score ?? -1) - (a.score ?? -1),
   );
 
-  // Default view: hide score < 5
-  const visibleCards = fullView ? allCards : allCards.filter((c) => (c.score ?? 0) >= 5);
-
-  const openCards = visibleCards.filter((c) => c.status === "new");
-  const reviewCards = visibleCards.filter((c) => c.status === "reviewing");
-  const doneCards = visibleCards.filter((c) =>
-    ["confirmed", "dismissed", "sent_to_lawyer", "resolved"].includes(c.status),
-  );
-
-  // Total counts (always from full set for KPIs)
   const allOpen = allCards.filter((c) => c.status === "new").length;
   const allReview = allCards.filter((c) => c.status === "reviewing").length;
   const allDone = allCards.filter((c) =>
     ["confirmed", "dismissed", "sent_to_lawyer", "resolved"].includes(c.status),
   ).length;
 
-  // KPI from hits table
   const kpiHits = (kpiRes.data ?? []) as Array<{ ai_score: number | null; status: HitStatus; first_seen_at: string; domain: string }>;
   const total = kpiHits.length + (tmRes.data ?? []).length;
   const high = [...kpiHits, ...(tmRes.data ?? []).map((t) => ({ ai_score: t.relevance_score, status: t.workflow_status as HitStatus, first_seen_at: t.created_at, domain: "" }))]
@@ -218,7 +193,6 @@ export default async function DashboardPage({
   const runs = (runsRes.data ?? []) as ScanRun[];
   const lastRun = runs[0];
 
-  // Only show banner if scan started within the last 2 hours (guards against stuck DB records)
   const scanIsActive =
     lastRun?.status === "running" &&
     Date.now() - new Date(lastRun.started_at).getTime() < 2 * 60 * 60 * 1000;
@@ -260,86 +234,54 @@ export default async function DashboardPage({
         </div>
       </section>
 
-      {/* Kanban header */}
-      <div className="mt-5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-stone-700">
-            {fullView ? "Alle Treffer" : "Treffer (Score ≥ 5)"}
-          </h2>
-          {/* Source legend */}
-          <div className="flex items-center gap-1.5">
-            <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold bg-sky-100 text-sky-700">Web</span>
-            <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold bg-violet-100 text-violet-700">DPMA</span>
-            <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold bg-indigo-100 text-indigo-700">EUIPO</span>
-            <span className="rounded-full px-2 py-0.5 text-[9px] font-semibold bg-stone-100 text-stone-500">Import</span>
-          </div>
-        </div>
-        {fullView ? (
-          <Link href="/" className="rounded-full border border-stone-200 px-3 py-1 text-xs text-stone-500 hover:text-stone-800">
-            ← Kompaktansicht
-          </Link>
-        ) : (
-          <Link href="/?view=all" className="rounded-full border border-stone-200 px-3 py-1 text-xs text-stone-500 hover:text-stone-800">
-            Alle anzeigen (inkl. Score &lt; 5)
-          </Link>
-        )}
-      </div>
-
       {/* Kanban-Board */}
-      <section className="mt-2">
-        <KanbanBoard
-          initialOpen={openCards}
-          initialReview={reviewCards}
-          initialDone={doneCards}
-          fullView={fullView}
-        />
+      <section className="mt-5">
+        <KanbanBoard cards={allCards} />
       </section>
 
-      {/* Scan-Historie (nur in Kompaktansicht) */}
-      {!fullView && (
-        <section className="glass mt-5 overflow-hidden">
-          <div className="flex items-center justify-between border-b border-white/60 px-5 py-3">
-            <h2 className="text-sm font-semibold text-slate-900">Scan-Historie</h2>
-            <Sparkline
-              data={runs.slice().reverse().map((r) => r.new_hits)}
-              color="#78716c"
-              width={140}
-              height={32}
-            />
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
-                <tr>
-                  <th className="px-5 py-3 font-semibold">Start</th>
-                  <th className="px-5 py-3 font-semibold hidden md:table-cell">Region</th>
-                  <th className="px-5 py-3 font-semibold hidden md:table-cell">Roh</th>
-                  <th className="px-5 py-3 font-semibold">Neu</th>
-                  <th className="px-5 py-3 font-semibold">Status</th>
+      {/* Scan-Historie */}
+      <section className="glass mt-5 overflow-hidden">
+        <div className="flex items-center justify-between border-b border-white/60 px-5 py-3">
+          <h2 className="text-sm font-semibold text-slate-900">Scan-Historie</h2>
+          <Sparkline
+            data={runs.slice().reverse().map((r) => r.new_hits)}
+            color="#78716c"
+            width={140}
+            height={32}
+          />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-left text-[10px] uppercase tracking-wider text-slate-500">
+              <tr>
+                <th className="px-5 py-3 font-semibold">Start</th>
+                <th className="px-5 py-3 font-semibold hidden md:table-cell">Region</th>
+                <th className="px-5 py-3 font-semibold hidden md:table-cell">Roh</th>
+                <th className="px-5 py-3 font-semibold">Neu</th>
+                <th className="px-5 py-3 font-semibold">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.length === 0 && (
+                <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">Noch kein Scan gelaufen.</td></tr>
+              )}
+              {runs.map((r) => (
+                <tr key={r.id} className="border-t border-white/50">
+                  <td className="px-5 py-3 text-[11px] text-slate-700">{new Date(r.started_at).toLocaleString("de-DE")}</td>
+                  <td className="px-5 py-3 text-[11px] capitalize hidden md:table-cell">{r.region ?? "—"}</td>
+                  <td className="px-5 py-3 text-[11px] hidden md:table-cell">{r.raw_results}</td>
+                  <td className="px-5 py-3 text-[11px] font-semibold text-emerald-700">{r.new_hits}</td>
+                  <td className="px-5 py-3">
+                    <span className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${r.status === "success" ? "bg-emerald-100/80 text-emerald-800" : r.status === "partial" ? "bg-amber-100/80 text-amber-800" : r.status === "failed" ? "bg-red-100/80 text-red-800" : "bg-slate-100/80 text-slate-700"}`}>
+                      {r.status}
+                    </span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {runs.length === 0 && (
-                  <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">Noch kein Scan gelaufen.</td></tr>
-                )}
-                {runs.map((r) => (
-                  <tr key={r.id} className="border-t border-white/50">
-                    <td className="px-5 py-3 text-[11px] text-slate-700">{new Date(r.started_at).toLocaleString("de-DE")}</td>
-                    <td className="px-5 py-3 text-[11px] capitalize hidden md:table-cell">{r.region ?? "—"}</td>
-                    <td className="px-5 py-3 text-[11px] hidden md:table-cell">{r.raw_results}</td>
-                    <td className="px-5 py-3 text-[11px] font-semibold text-emerald-700">{r.new_hits}</td>
-                    <td className="px-5 py-3">
-                      <span className={`rounded-full px-2.5 py-1 text-[10px] font-medium ${r.status === "success" ? "bg-emerald-100/80 text-emerald-800" : r.status === "partial" ? "bg-amber-100/80 text-amber-800" : r.status === "failed" ? "bg-red-100/80 text-red-800" : "bg-slate-100/80 text-slate-700"}`}>
-                        {r.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </AppShell>
   );
 }
