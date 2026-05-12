@@ -102,7 +102,8 @@ export function resolveCompany(
 // damit alle Seiten von masterplan-immobilien.de zusammen landen.
 //
 // Aggregator-Domains (immoscout, immowelt, gelbeseiten, yelp, presseportal …)
-// → nach normalisiertem Firmenname + Ort. Prioritäten für Ort:
+// und Import-Hits (domain="import") → nach normalisiertem Firmenname + Ort.
+// Prioritäten für Ort:
 //   1. address-Feld (PLZ+Stadt oder Stadtname)
 //   2. Stadt im Firmennamen ("Master Immobilien Frankfurt GmbH")
 //   3. Kein Ort, aber Rechtsform → Firmenname allein (DE-Recht: eindeutig)
@@ -115,7 +116,7 @@ export function canonicalKey(
 ): string {
   const domain = baseDomain(hit.domain);
 
-  if (!isAggregatorDomain(hit.domain)) {
+  if (!isAggregatorDomain(hit.domain) && domain !== "import") {
     return `d:${domain}`;
   }
 
