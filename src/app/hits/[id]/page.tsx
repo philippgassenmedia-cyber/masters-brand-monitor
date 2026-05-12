@@ -111,7 +111,18 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
               </div>
               <div className="min-w-0 flex-1">
                 <h1 className="text-2xl font-bold text-stone-900">{profile.company ?? hit.domain}</h1>
-                <a href={hit.url} target="_blank" rel="noopener noreferrer" className="mt-1 block break-all text-sm text-orange-700 hover:underline">{hit.url}</a>
+                {hit.url?.startsWith("imported://") ? (
+                  hit.attachment_url ? (
+                    <a href={`/api/hits/${hit.id}/attachment`} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1.5 text-sm text-orange-700 hover:underline">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      Quell-PDF öffnen
+                    </a>
+                  ) : (
+                    <span className="mt-1 block text-sm text-stone-400">Manuell importiert</span>
+                  )
+                ) : (
+                  <a href={hit.url} target="_blank" rel="noopener noreferrer" className="mt-1 block break-all text-sm text-orange-700 hover:underline">{hit.url}</a>
+                )}
                 {hit.violation_category && (
                   <span className="mt-2 inline-block rounded-full bg-stone-100 px-3 py-0.5 text-[11px] font-semibold text-stone-700">
                     {CATEGORY_LABELS[hit.violation_category] ?? hit.violation_category}
@@ -196,7 +207,7 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
                               <span className="truncate text-[13px] font-semibold text-stone-900">{r.domain}</span>
                               <span className="rounded-full bg-stone-900 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-white">Dieser Eintrag</span>
                             </div>
-                            <a href={r.url} target="_blank" rel="noopener noreferrer" className="block truncate text-[11px] text-stone-500 hover:text-stone-800">{r.url}</a>
+                            {!r.url?.startsWith("imported://") && <a href={r.url} target="_blank" rel="noopener noreferrer" className="block truncate text-[11px] text-stone-500 hover:text-stone-800">{r.url}</a>}
                           </div>
                         </div>
                       ) : (
@@ -204,7 +215,7 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
                           <ScoreBadge score={r.ai_score} />
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-[13px] font-medium text-stone-900">{r.domain}</div>
-                            <div className="truncate text-[11px] text-stone-500">{r.url}</div>
+                            {!r.url?.startsWith("imported://") && <div className="truncate text-[11px] text-stone-500">{r.url}</div>}
                           </div>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-stone-400"><polyline points="9 18 15 12 9 6" /></svg>
                         </Link>
