@@ -133,7 +133,7 @@ export default async function DashboardPage() {
       .limit(8),
     supabase
       .from("trademarks")
-      .select("id, markenname, aktenzeichen, relevance_score, workflow_status, quelle, prioritaet, widerspruchsfrist_ende, created_at")
+      .select("id, markenname, aktenzeichen, relevance_score, workflow_status, quelle, prioritaet, widerspruchsfrist_ende, created_at, markenform")
       .order("relevance_score", { ascending: false, nullsFirst: false })
       .limit(1000),
   ]);
@@ -167,6 +167,7 @@ export default async function DashboardPage() {
     source: (t.quelle ?? "dpma").toLowerCase().includes("euipo") ? "euipo" : "dpma",
     href: `/trademarks/${t.id}`,
     type: "trademark" as const,
+    markenform: t.markenform ?? null,
   }));
 
   const allCards = [...hitCards, ...tmCards].sort(

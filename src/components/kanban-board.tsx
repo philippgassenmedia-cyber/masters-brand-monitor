@@ -16,6 +16,7 @@ export interface KanbanCard {
   source: string;
   href: string;
   type: "hit" | "trademark";
+  markenform?: string | null;
 }
 
 const COLUMN_STATUS: Record<"open" | "review" | "done", HitStatus> = {
@@ -118,7 +119,16 @@ function KanbanCardItem({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-1">
-            <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-stone-900">{card.title}</p>
+            <div className="flex items-start gap-1.5 min-w-0">
+              {card.markenform?.toLowerCase().includes("bild") && (
+                <span title="Bildmarke" className="mt-0.5 shrink-0 text-stone-400">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
+                  </svg>
+                </span>
+              )}
+              <p className="line-clamp-2 text-[13px] font-semibold leading-tight text-stone-900">{card.title}</p>
+            </div>
             {card.totalCount > 1 && (
               <span className="ml-1 mt-0.5 shrink-0 rounded-full bg-stone-800/80 px-1.5 py-0.5 text-[9px] font-semibold text-white">
                 +{card.totalCount - 1}
@@ -203,8 +213,7 @@ function KanbanColumn({
   );
 }
 
-// ── Filter constants ───────────────────────────────────────────────────────────
-
+// ── Filter constants ────────────────────────────────────────────────────────────────────────────────\n
 const SCORE_OPTIONS = [
   { value: 0, label: "Alle" },
   { value: 3, label: "≥ 3" },
@@ -218,10 +227,10 @@ const SOURCE_OPTIONS = [
   { id: "dpma", label: "DPMA", active: "bg-violet-500 text-white", inactive: "bg-violet-50 text-violet-600 hover:bg-violet-100" },
   { id: "euipo", label: "EUIPO", active: "bg-indigo-500 text-white", inactive: "bg-indigo-50 text-indigo-600 hover:bg-indigo-100" },
   { id: "import", label: "Import", active: "bg-stone-600 text-white", inactive: "bg-stone-100 text-stone-500 hover:bg-stone-200" },
+  { id: "handelsregister", label: "HR", active: "bg-teal-600 text-white", inactive: "bg-teal-50 text-teal-600 hover:bg-teal-100" },
 ] as const;
 
-// ── KanbanBoard ───────────────────────────────────────────────────────────────────
-
+// ── KanbanBoard ─────────────────────────────────────────────────────────────────────────────────────\n
 export function KanbanBoard({ cards: initialCards }: { cards: KanbanCard[] }) {
   const [allCards, setAllCards] = useState<KanbanCard[]>(initialCards);
 
