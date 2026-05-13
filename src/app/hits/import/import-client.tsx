@@ -1,7 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
+
+interface StorageFile {
+  storagePath: string;
+  name: string;
+  size: number;
+  createdAt: string;
+  linkedCount: number;
+}
 
 type HitStatus = "new" | "reviewing" | "confirmed" | "dismissed" | "sent_to_lawyer" | "resolved";
 type ViolationCategory =
@@ -105,7 +113,7 @@ async function extractFile(
 }
 
 export function ImportClient() {
-  const [tab, setTab] = useState<"pdf" | "manual">("pdf");
+  const [tab, setTab] = useState<"pdf" | "manual" | "uploads">("pdf");
 
   // ── Review queue ─────────────────────────────────────────────────────────────
   const [queue, setQueue] = useState<ImportHit[]>([]);
@@ -192,6 +200,48 @@ export function ImportClient() {
   const [fileStatuses, setFileStatuses] = useState<Record<string, FileStatus>>({});
   const [extracting, setExtracting] = useState(false);
 
+  // ── Uploads tab ──────────────────────────────────────────────────────────────
+  const [uploads, setUploads] = useState<StorageFile[] | null>(null);
+  const [uploadsLoading, setUploadsLoading] = useState(false);
+  const [relinkingPath, setRelinkingPath] = useState<string | null>(null);
+  const [relinkResults, setRelinkResults] = useState<Record<string, number>>({});
+
+  const loadUploads = useCallback(async () => {
+    setUploadsLoading(true);
+    try {
+      const res = await fetch("/api/hits/import/uploads");
+      const data = await res.json();
+      setUploads(data.files ?? []);
+    } catch {
+      setUploads([]);
+    } finally {
+      setUploadsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === "uploads" && uploads === null) {
+      loadUploads();
+    }
+  }, [tab, uploads, loadUploads]);
+
+  const relinkFile = async (file: StorageFile) => {
+    setRelinkingPath(file.storagePath);
+    try {
+      const res = await fetch("/api/hits/import/relink", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storagePath: file.storagePath, createdAt: file.createdAt }),
+      });
+      const data = await res.json();
+      setRelinkResults((prev) => ({ ...prev, [file.storagePath]: data.linked ?? 0 }));
+      // Refresh uploads list to show updated linkedCount
+      await loadUploads();
+    } finally {
+      setRelinkingPath(null);
+    }
+  };
+
   const setFileStatus = useCallback((name: string, status: FileStatus) => {
     setFileStatuses((prev) => ({ ...prev, [name]: status }));
   }, []);
@@ -273,7 +323,7 @@ export function ImportClient() {
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-xl border border-white/70 bg-white/40 p-1">
-        {(["pdf", "manual"] as const).map((t) => (
+        {(["pdf", "manual", "uploads"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -281,7 +331,7 @@ export function ImportClient() {
               tab === t ? "bg-stone-900 text-white shadow-sm" : "text-stone-600 hover:bg-white/60"
             }`}
           >
-            {t === "pdf" ? "PDF-Upload" : "Manuell"}
+            {t === "pdf" ? "PDF-Upload" : t === "manual" ? "Manuell" : "Uploads"}
           </button>
         ))}
       </div>
@@ -595,6 +645,86 @@ export function ImportClient() {
                   <span key={v} className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${STATUS_COLORS[v as HitStatus]}`}>{l}</span>
                 ))}
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Uploads-Tab ──────────────────────────────────────────────────────── */}
+      {tab === "uploads" && (
+        <div className="glass space-y-4 rounded-2xl p-5">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-stone-500">
+              Hochgeladene PDFs aus dem Storage. Treffer ohne Verknüpfung können hier nachträglich mit dem jeweiligen PDF verbunden werden.
+            </p>
+            <button
+              onClick={loadUploads}
+              disabled={uploadsLoading}
+              className="shrink-0 rounded-lg border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-white/60 transition disabled:opacity-50"
+            >
+              {uploadsLoading ? "Lädt…" : "Aktualisieren"}
+            </button>
+          </div>
+
+          {uploadsLoading && uploads === null && (
+            <div className="flex items-center justify-center py-8 text-xs text-stone-400">
+              Lädt Uploads…
+            </div>
+          )}
+
+          {!uploadsLoading && uploads !== null && uploads.length === 0 && (
+            <div className="flex items-center justify-center py-8 text-xs text-stone-400">
+              Keine hochgeladenen PDFs gefunden.
+            </div>
+          )}
+
+          {uploads !== null && uploads.length > 0 && (
+            <div className="space-y-2">
+              {uploads.map((file) => {
+                const isRelinking = relinkingPath === file.storagePath;
+                const relinkResult = relinkResults[file.storagePath];
+                return (
+                  <div key={file.storagePath} className="flex items-center gap-3 rounded-xl border border-white/70 bg-white/50 px-4 py-3">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-stone-400">
+                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium text-stone-800">{file.name}</p>
+                      <p className="text-[10px] text-stone-400">
+                        {(file.size / 1024 / 1024).toFixed(1)} MB ·{" "}
+                        {new Date(file.createdAt).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" })}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {file.linkedCount > 0 ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">
+                          ✓ {file.linkedCount} verknüpft
+                        </span>
+                      ) : relinkResult !== undefined ? (
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${relinkResult > 0 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+                          {relinkResult > 0 ? `✓ ${relinkResult} verknüpft` : "Kein Treffer gefunden"}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => relinkFile(file)}
+                          disabled={isRelinking}
+                          className="rounded-lg bg-stone-900 px-3 py-1 text-[10px] font-medium text-white hover:bg-stone-700 transition disabled:opacity-50"
+                        >
+                          {isRelinking ? "Verknüpfe…" : "Verknüpfen"}
+                        </button>
+                      )}
+                      <a
+                        href={`/api/hits/import/preview-pdf?path=${encodeURIComponent(file.storagePath)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[10px] text-orange-700 hover:underline"
+                      >
+                        PDF
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

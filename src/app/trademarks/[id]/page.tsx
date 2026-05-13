@@ -116,7 +116,7 @@ export default async function TrademarkDetailPage({
       <div className="space-y-6 pb-10">
 
       {/* Bildmarken-Vorschau */}
-      {tm.markenform?.toLowerCase().includes("bild") && (
+      {(tm.markenform == null || tm.markenform.toLowerCase().includes("bild")) && (
         <TrademarkImage
           aktenzeichen={tm.aktenzeichen}
           quelle={tm.quelle}
