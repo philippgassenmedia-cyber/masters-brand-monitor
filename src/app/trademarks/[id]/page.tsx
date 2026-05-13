@@ -8,6 +8,9 @@ import type { Trademark } from "@/lib/dpma/types";
 import { WebsiteLookup } from "./website-lookup";
 import { TrademarkExcludeButton } from "@/components/trademark-exclude-button";
 import { FeedbackForm } from "@/components/feedback-form";
+import { TrademarkStatusForm } from "./trademark-status-form";
+import { NotesFeed } from "@/components/notes-feed";
+import { TrademarkImage } from "@/components/trademark-image";
 
 export const dynamic = "force-dynamic";
 
@@ -108,9 +111,22 @@ export default async function TrademarkDetailPage({
         <TrademarkExcludeButton trademarkId={tm.id} markenname={tm.markenname} />
       </div>
 
+      <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_340px] xl:items-start">
+      {/* ── Left column ────────────────────────────────────────────────── */}
+      <div className="space-y-6 pb-10">
+
+      {/* Bildmarken-Vorschau */}
+      {(tm.markenform == null || tm.markenform.toLowerCase().includes("bild")) && (
+        <TrademarkImage
+          aktenzeichen={tm.aktenzeichen}
+          quelle={tm.quelle}
+          markenname={tm.markenname}
+        />
+      )}
+
       {/* Fristen-Countdown */}
       {days !== null && (
-        <section className="glass mt-6 p-6">
+        <section className="glass p-6">
           <h2 className="mb-3 text-lg font-semibold text-stone-900">Widerspruchsfrist</h2>
           <div className="flex items-center gap-6">
             <div
@@ -158,7 +174,7 @@ export default async function TrademarkDetailPage({
       )}
 
       {/* KI-Bewertung */}
-      <section className="glass mt-6 p-6">
+      <section className="glass p-6">
         <h2 className="mb-4 text-lg font-semibold text-stone-900">Relevanz-Bewertung</h2>
         <div className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
           <Field label="Score" value={tm.relevance_score !== null ? `${tm.relevance_score} / 10` : "—"} />
@@ -181,9 +197,9 @@ export default async function TrademarkDetailPage({
       </section>
 
       {/* Marken-Details */}
-      <section className="glass mt-6 p-6">
+      <section className="glass p-6">
         <h2 className="mb-4 text-lg font-semibold text-stone-900">Marken-Details</h2>
-        <div className="grid grid-cols-2 gap-4 text-sm">
+        <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
           <Field label="Anmelder / Inhaber" value={tm.anmelder ?? "—"} />
           <Field label="Status" value={tm.status ?? "—"} />
           <Field label="Markenform" value={tm.markenform ?? "—"} />
@@ -213,7 +229,7 @@ export default async function TrademarkDetailPage({
 
       {/* Waren/Dienstleistungen */}
       {tm.waren_dienstleistungen && (
-        <section className="glass mt-6 p-6">
+        <section className="glass p-6">
           <h2 className="mb-3 text-lg font-semibold text-stone-900">Verwendungszweck</h2>
           <div className="rounded-xl border border-white/70 bg-white/60 p-4 text-sm text-stone-800 leading-relaxed">
             {tm.waren_dienstleistungen}
@@ -223,7 +239,7 @@ export default async function TrademarkDetailPage({
 
       {/* Web-Treffer Cross-Match */}
       {matchedWebHits.length > 0 && (
-        <section className="glass mt-6 p-6">
+        <section className="glass p-6">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-stone-900">
               Im Web gefunden
@@ -274,7 +290,7 @@ export default async function TrademarkDetailPage({
       />
 
       {/* Nizza-Klassen mit Beschreibung */}
-      <section className="glass mt-6 p-6">
+      <section className="glass p-6">
         <h2 className="mb-4 text-lg font-semibold text-stone-900">
           Waren- und Dienstleistungsklassen
           <span className="ml-2 text-sm font-normal text-stone-500">
@@ -325,6 +341,18 @@ export default async function TrademarkDetailPage({
       </section>
 
       <FeedbackForm itemType="trademark" itemId={tm.id} currentScore={tm.relevance_score} />
+      </div>{/* end left column */}
+
+      {/* ── Right column ────────────────────────────────────────────── */}
+      <div className="space-y-4 xl:sticky xl:top-3 pb-10">
+        <NotesFeed notesUrl={`/api/trademarks/${tm.id}/notes`} />
+        <TrademarkStatusForm
+          trademarkId={tm.id}
+          initialStatus={(tm.workflow_status ?? "new") as "new" | "reviewing" | "confirmed" | "dismissed" | "sent_to_lawyer" | "resolved"}
+          initialNotes={tm.notes}
+        />
+      </div>
+      </div>{/* end grid */}
     </AppShell>
   );
 }
