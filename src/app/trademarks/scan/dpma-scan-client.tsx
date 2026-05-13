@@ -5,6 +5,10 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { NIZZA_BESCHREIBUNG, IMMOBILIEN_KLASSEN } from "@/lib/dpma/nizza-klassen";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { MobileDpmaScan } from "@/components/mobile-dpma-scan";
+import { searchDpmaHttp, type RawHit } from "@/lib/dpma/register-search-http";
+import { getTopVariants } from "@/lib/dpma/variant-generator";
+import type { DpmaKurierHit } from "@/lib/dpma/types";
+import type { DpmaEvent } from "@/lib/dpma/register-search-stream";
 
 const PREREQS = [
   { name: "Node.js (LTS)", url: "https://nodejs.org" },
@@ -310,6 +314,7 @@ function DpmaScanClientDesktop({
   // Agent-based scan state (DPMA + EUIPO — all via local agent)
   const [agentScan, setAgentScan] = useState<AgentScanState>(AGENT_IDLE);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortClassifyRef = useRef<AbortController | null>(null);
   const seenAzRef = useRef<Set<string>>(new Set());
   const prevAgentPhaseRef = useRef<AgentPhase>("idle");
 
@@ -430,6 +435,7 @@ function DpmaScanClientDesktop({
 
   const stopAgentScan = useCallback(() => {
     stopPoll();
+    abortClassifyRef.current?.abort();
     setAgentScan((prev) => ({ ...prev, phase: "idle" }));
     seenAzRef.current.clear();
   }, [stopPoll]);
@@ -492,20 +498,179 @@ function DpmaScanClientDesktop({
     }
   }, [stopPoll, runPoll]);
 
+  const handleClassifyEvent = useCallback((evt: DpmaEvent) => {
+    setAgentScan((prev) => {
+      const log = [...prev.log.slice(-299)];
+      let hits = [...prev.hits];
+      switch (evt.type) {
+        case "status":
+          log.push({ ts: Date.now(), tone: "info", text: evt.message });
+          break;
+        case "analyze:start":
+          log.push({ ts: Date.now(), tone: "info", text: `[${evt.index}/${evt.total}] Analysiere: ${evt.markenname}` });
+          break;
+        case "analyze:done":
+          log.push({ ts: Date.now(), tone: "ok", text: `Bewertet: ${evt.markenname} · Score ${evt.score ?? "—"} · ${evt.matchType}` });
+          break;
+        case "hit:new":
+          if (!seenAzRef.current.has(evt.aktenzeichen)) {
+            seenAzRef.current.add(evt.aktenzeichen);
+            hits = [
+              { id: evt.id, aktenzeichen: evt.aktenzeichen, markenname: evt.markenname, score: evt.score, website: evt.website ?? null },
+              ...hits,
+            ].slice(0, 200);
+            log.push({ ts: Date.now(), tone: "ok", text: `Neu: ${evt.markenname} (${evt.aktenzeichen})${evt.website ? ` → ${tryHostname(evt.website)}` : ""}` });
+          }
+          break;
+        case "hit:dup":
+          log.push({ ts: Date.now(), tone: "info", text: `Bekannt: ${evt.aktenzeichen}` });
+          break;
+        case "error":
+          log.push({ ts: Date.now(), tone: "err", text: evt.message });
+          break;
+      }
+      return { ...prev, log, hits };
+    });
+  }, []);
+
+  const runBrowserScan = useCallback(async () => {
+    seenAzRef.current.clear();
+    const sinceTs = new Date().toISOString();
+
+    const pushLog = (text: string, tone: AgentLogLine["tone"] = "info") =>
+      setAgentScan((prev) => ({
+        ...prev,
+        log: [...prev.log.slice(-299), { ts: Date.now(), tone, text }],
+      }));
+
+    setAgentScan({
+      phase: "running",
+      jobId: null,
+      sinceTs,
+      hits: [],
+      log: [{ ts: Date.now(), tone: "info", text: "Browser-Scan startet…" }],
+      jobStatus: "browser",
+      startedAt: Date.now(),
+    });
+
+    try {
+      // Phase 1a: Load stems
+      pushLog("Lade Markensstämme…");
+      const stemsRes = await fetch("/api/dpma/stems");
+      if (!stemsRes.ok) throw new Error("Markensstämme nicht ladbar");
+      const { stems: stemData } = (await stemsRes.json()) as { stems: Array<{ stamm: string; aktiv: boolean }> };
+      const activeStems = stemData.filter((s) => s.aktiv).map((s) => s.stamm);
+      if (activeStems.length === 0) activeStems.push("master");
+      pushLog(`${activeStems.length} Markensstämme geladen`, "ok");
+
+      // Phase 1b: Browser DPMA fetch
+      const seenAz = new Set<string>();
+      const allRawHits: RawHit[] = [];
+      const opts = { nurDE, nurInKraft, klassen: klassenString, zeitraumMonate };
+      let corsWasBlocked = false;
+
+      outer: for (const stem of activeStems) {
+        const variants = getTopVariants(stem, 3);
+        pushLog(`Stamm „${stem}“: ${variants.length} Varianten`);
+        for (const variant of variants) {
+          pushLog(`→ Suche „${variant}“ im DPMA-Register…`);
+          const { hits, corsBlocked, diag } = await searchDpmaHttp(variant, opts, seenAz, []);
+          if (corsBlocked) { corsWasBlocked = true; break outer; }
+          pushLog(`  ✓ ${hits.length} Treffer · ${diag.slice(0, 60)}`, hits.length > 0 ? "ok" : "info");
+          allRawHits.push(...hits);
+        }
+      }
+
+      if (corsWasBlocked) {
+        pushLog("DPMA blockiert Browser-Anfragen (CORS) — erstelle Auftrag für lokalen Agenten…", "warn");
+        await startAgentScan(klassenString);
+        return;
+      }
+
+      if (allRawHits.length === 0) {
+        pushLog("Keine Treffer im DPMA-Register gefunden");
+        setAgentScan((prev) => ({ ...prev, phase: "done" }));
+        return;
+      }
+
+      // Convert RawHit[] → DpmaKurierHit[]
+      const kurierHits: DpmaKurierHit[] = allRawHits.map((h) => ({
+        aktenzeichen: h.az,
+        markenname: h.name || `[${h.az}]`,
+        anmelder: null,
+        anmeldetag: null,
+        veroeffentlichungstag: null,
+        status: h.status,
+        nizza_klassen: [],
+        waren_dienstleistungen: null,
+        inhaber_anschrift: null,
+        vertreter: null,
+        markenform: null,
+        schutzdauer_bis: null,
+      }));
+
+      pushLog(`${kurierHits.length} Treffer → Server-Klassifizierung…`, "ok");
+
+      // Phase 2: Classify via SSE
+      abortClassifyRef.current?.abort();
+      const ctrl = new AbortController();
+      abortClassifyRef.current = ctrl;
+
+      const res = await fetch("/api/dpma/classify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hits: kurierHits }),
+        signal: ctrl.signal,
+      });
+      if (!res.ok || !res.body) throw new Error(`Classify: HTTP ${res.status}`);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split("\n\n");
+        buffer = chunks.pop() ?? "";
+        for (const chunk of chunks) {
+          const line = chunk.trim();
+          if (!line.startsWith("data:")) continue;
+          const rawJson = line.slice(5).trim();
+          if (!rawJson) continue;
+          try { handleClassifyEvent(JSON.parse(rawJson) as DpmaEvent); } catch {}
+        }
+      }
+
+      setAgentScan((prev) => ({ ...prev, phase: "done" }));
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+      setAgentScan((prev) => ({
+        ...prev,
+        phase: "error",
+        log: [...prev.log.slice(-299), { ts: Date.now(), tone: "err", text: `Fehler: ${(e as Error).message}` }],
+      }));
+    }
+  }, [nurDE, nurInKraft, klassenString, zeitraumMonate, startAgentScan, handleClassifyEvent]);
+
   const start = () => {
-    const typeMap: Record<ScanSource, string> = {
-      dpma: "dpma",
-      euipo: "euipo",
-      hr: "handelsregister",
-      all: "all",
-    };
-    startAgentScan(klassenString, typeMap[source] as never);
+    if (source === "dpma") {
+      runBrowserScan();
+    } else {
+      const typeMap: Record<ScanSource, string> = {
+        dpma: "dpma",
+        euipo: "euipo",
+        hr: "handelsregister",
+        all: "all",
+      };
+      startAgentScan(klassenString, typeMap[source] as never);
+    }
   };
 
   const stop = () => stopAgentScan();
 
-  // Cleanup poll on unmount
-  useEffect(() => () => stopPoll(), [stopPoll]);
+  // Cleanup on unmount
+  useEffect(() => () => { stopPoll(); abortClassifyRef.current?.abort(); }, [stopPoll]);
 
   // Determine display state — all sources use the agent
   const isActive = agentScan.phase !== "idle";
@@ -535,7 +700,9 @@ function DpmaScanClientDesktop({
     statusTitle = "Warte auf lokalen Agenten…";
     statusSub = "Agent muss auf deinem Rechner laufen (alle 30s Polling)";
   } else if (agentScan.phase === "running") {
-    statusTitle = `Agent durchsucht ${registerLabel}`;
+    statusTitle = agentScan.jobStatus === "browser"
+      ? `Browser durchsucht ${registerLabel}`
+      : `Agent durchsucht ${registerLabel}`;
     statusSub = `Verstrichen: ${formatDuration(elapsed)}`;
   } else if (agentScan.phase === "done") {
     statusTitle = "Suche abgeschlossen";
@@ -695,7 +862,7 @@ function DpmaScanClientDesktop({
             <div className="flex items-end">
               <div className="rounded-xl border border-white/70 bg-white/50 px-3 py-2 text-[11px] text-stone-600">
                 Wort- &amp; Bildmarken werden beide durchsucht.<br />
-                Markenstämme aus den{" "}
+                Markensstämme aus den{" "}
                 <Link href="/settings/dpma" className="font-semibold text-stone-800 underline">
                   Einstellungen
                 </Link>.
