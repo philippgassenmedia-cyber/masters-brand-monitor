@@ -9,6 +9,7 @@ import { FeedbackForm } from "@/components/feedback-form";
 import { NotesFeed } from "@/components/notes-feed";
 import { DeleteHitButton } from "@/components/delete-hit-button";
 import { DownloadHitButton } from "@/components/download-hit-button";
+import { WebsitePreview } from "@/components/website-preview";
 
 export const dynamic = "force-dynamic";
 
@@ -130,6 +131,9 @@ export default async function HitDetailPage({ params }: { params: Promise<{ id: 
                 )}
               </div>
             </div>
+
+            {/* Screenshot-Vorschau (nur für echte URLs) */}
+            {!hit.url?.startsWith("imported://") && <WebsitePreview url={hit.url} />}
 
             {/* Verletzer-Profil */}
             <section className="glass p-6">

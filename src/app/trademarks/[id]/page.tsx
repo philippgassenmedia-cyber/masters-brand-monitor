@@ -10,6 +10,7 @@ import { TrademarkExcludeButton } from "@/components/trademark-exclude-button";
 import { FeedbackForm } from "@/components/feedback-form";
 import { TrademarkStatusForm } from "./trademark-status-form";
 import { NotesFeed } from "@/components/notes-feed";
+import { TrademarkImage } from "@/components/trademark-image";
 
 export const dynamic = "force-dynamic";
 
@@ -111,8 +112,17 @@ export default async function TrademarkDetailPage({
       </div>
 
       <div className="mt-6 grid gap-6 xl:grid-cols-[1fr_340px] xl:items-start">
-      {/* ── Left column ─────────────────────────────────── */}
+      {/* ── Left column ────────────────────────────────────────────────── */}
       <div className="space-y-6 pb-10">
+
+      {/* Bildmarken-Vorschau */}
+      {tm.markenform?.toLowerCase().includes("bild") && (
+        <TrademarkImage
+          aktenzeichen={tm.aktenzeichen}
+          quelle={tm.quelle}
+          markenname={tm.markenname}
+        />
+      )}
 
       {/* Fristen-Countdown */}
       {days !== null && (
@@ -333,7 +343,7 @@ export default async function TrademarkDetailPage({
       <FeedbackForm itemType="trademark" itemId={tm.id} currentScore={tm.relevance_score} />
       </div>{/* end left column */}
 
-      {/* ── Right column ────────────────────────────────── */}
+      {/* ── Right column ────────────────────────────────────────────── */}
       <div className="space-y-4 xl:sticky xl:top-3 pb-10">
         <NotesFeed notesUrl={`/api/trademarks/${tm.id}/notes`} />
         <TrademarkStatusForm
