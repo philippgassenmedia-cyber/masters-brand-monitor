@@ -56,17 +56,23 @@ export default async function TrademarkDetailPage({
           const hitName = normalizeForMatch(h.company_name ?? h.domain ?? "");
           if (!hitName) return null;
 
+          // Exakt-Match (normalisiert)
           if (hitName === tmNorm) return { ...h, matchQuality: "exact" as const };
 
+          // Levenshtein auf den ganzen Namen (nur bei ähnlicher Länge)
           if (Math.abs(hitName.length - tmNorm.length) <= 5) {
             const dist = levenshtein(hitName, tmNorm);
             if (dist <= 2) return { ...h, matchQuality: "fuzzy" as const };
           }
 
+          // Compound: Markenname ist vollständig im Firmennamen enthalten
+          // aber nur wenn Markenname mindestens 2 Wörter hat
           if (tmWords.length >= 2 && hitName.includes(tmNorm)) {
             return { ...h, matchQuality: "compound" as const };
           }
 
+          // Wort-Match: alle Wörter des Markennamens (≥3 Zeichen) im Firmennamen
+          // nur wenn mindestens 2 signifikante Wörter matchen
           if (tmWords.length >= 2) {
             const matched = tmWords.filter((w) => hitName.includes(w));
             if (matched.length === tmWords.length) {
